@@ -63,7 +63,7 @@ dotnet run --project src\Beneflow.Api
 - TLS 证书自动生成于 `%LocalAppData%\Beneflow\tls`，手机端安装根 CA 证书后 HTTPS 受信
 - 数据库备份输出到 `backups/`（不入库）
 
-## 演示账号
+## 演示账号 & 初始账号
 
 | 用户名 | 密码 | 角色 |
 |---|---|---|
