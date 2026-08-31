@@ -21,6 +21,7 @@ appsettings.json
 
 ## IDE
 .idea/
+.vscode/
 *.swp
 
 ## OS
