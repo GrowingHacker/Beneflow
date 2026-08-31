@@ -1,0 +1,156 @@
+<div>
+  <div class="stat-row">
+    <div class="stat-card">
+      <div class="label">今日销售额</div>
+      <div class="value">{{ common.money(summary?.today?.sales) }}</div>
+    </div>
+    <div class="stat-card success">
+      <div class="label">今日订单 / 客单价</div>
+      <div class="value">{{ summary?.today?.orders || 0 }} 单 / {{ common.money(summary?.today?.avg) }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">今日毛利</div>
+      <div class="value">{{ common.money(summary?.today?.profit) }}</div>
+    </div>
+    <div class="stat-card success">
+      <div class="label">本月销售额</div>
+      <div class="value">{{ common.money(summary?.month?.sales) }}</div>
+    </div>
+  </div>
+
+  <div class="stat-row">
+    <div class="stat-card danger">
+      <div class="label">缺货 / 预警</div>
+      <div class="value">{{ summary?.stock?.shortage || 0 }} / {{ summary?.stock?.warning || 0 }}</div>
+    </div>
+    <div class="stat-card warn">
+      <div class="label">临期商品</div>
+      <div class="value">{{ summary?.stock?.expiry || 0 }}</div>
+    </div>
+    <div class="stat-card warn">
+      <div class="label">赊账总欠款</div>
+      <div class="value">{{ common.money(summary?.credit?.total) }}</div>
+    </div>
+    <div class="stat-card danger">
+      <div class="label">未结清赊账</div>
+      <div class="value">{{ summary?.credit?.unsettled || 0 }} 笔</div>
+    </div>
+  </div>
+
+  <el-row :gutter="16">
+    <el-col :xs="24" :sm="14">
+      <div class="chart-box">
+        <div class="chart-title">近 7 天销售趋势</div>
+        <div ref="trendEl" style="height:280px;"></div>
+      </div>
+    </el-col>
+    <el-col :xs="24" :sm="10">
+      <div class="chart-box">
+        <div class="chart-title">商品销量 Top 5</div>
+        <div ref="topEl" style="height:280px;"></div>
+      </div>
+    </el-col>
+  </el-row>
+
+  <div class="page-card" style="margin-top:16px;">
+    <div class="card-title">快捷入口</div>
+    <div class="quick-entry">
+      <el-button type="primary" size="default" @click="goPage(1)">💰 收银台</el-button>
+      <el-button type="success" size="default" @click="goPage(6)">📥 进货单</el-button>
+      <el-button size="default" @click="goPage(11)">🔍 盘点</el-button>
+      <el-button type="warning" size="default" @click="goPage(3)">📄 赊账</el-button>
+      <el-button size="default" @click="goPage(9)">⚠️ 库存预警</el-button>
+      <el-button type="info" size="default" plain @click="openMobileQr">📱 手机端进货</el-button>
+    </div>
+  </div>
+
+  <!-- 手机端访问二维码 -->
+  <el-dialog v-model="qrDialog" title="📱 手机扫码打开进货录入" width="360px" align-center>
+    <div style="text-align:center;">
+      <div id="mobile-qr-box" style="display:inline-block;padding:10px;border:1px solid #ebeef5;border-radius:8px;"></div>
+      <p style="margin:12px 0 4px;font-size:13px;">手机与电脑连接同一 WiFi，用相机/微信扫码直达</p>
+      <p style="margin:0;word-break:break-all;font-size:12px;font-weight:600;">{{ mobileUrl }}</p>
+      <template v-if="mobileHttpUrl">
+        <p style="margin:8px 0 0;color:#909399;word-break:break-all;font-size:12px;">备用（http）：{{ mobileHttpUrl }}</p>
+        <p style="margin:6px 0 0;color:#c0c4cc;font-size:12px;text-align:left;">
+          首次使用摄像头：先用 http 地址打开手机端登录页 → 点「下载并安装服务器证书」并在系统里信任 → 之后扫码地址即可实时扫码
+        </p>
+      </template>
+      <p v-else-if="!mobileHttps" style="margin:8px 0 0;color:#c0c4cc;font-size:12px;">
+        HTTPS 未就绪：局域网下只能手动输入条码或拍照识码
+      </p>
+    </div>
+  </el-dialog>
+</div>
+
+<script page-setup>
+function pageSetup(deps) {
+  const { ref, onMounted, nextTick } = Vue;
+  const { api, common, goPage } = deps;
+
+  const summary = ref(null);
+  const trendEl = ref(null);
+  const topEl = ref(null);
+  const qrDialog = ref(false);
+  const mobileUrl = ref('');
+  const mobileHttpUrl = ref('');
+  const mobileHttps = ref(false);
+  let trendChart = null, topChart = null;
+
+  async function load() {
+    try {
+      summary.value = await api.get('/dashboard/summary');
+      nextTick(render);
+    } catch (e) {}
+  }
+
+  function render() {
+    if (!summary.value) return;
+    if (trendEl.value) {
+      trendChart = echarts.init(trendEl.value);
+      trendChart.setOption({
+        tooltip: { trigger: 'axis' },
+        grid: { left: 40, right: 20, top: 30, bottom: 30 },
+        xAxis: { type: 'category', data: summary.value.trend.map(function (t) { return t.date; }) },
+        yAxis: { type: 'value' },
+        series: [{
+          name: '销售额', type: 'line', smooth: true, areaStyle: {},
+          data: summary.value.trend.map(function (t) { return t.sales; }),
+          itemStyle: { color: '#409eff' }
+        }]
+      });
+    }
+    if (topEl.value) {
+      topChart = echarts.init(topEl.value);
+      var names = summary.value.top5.map(function (t) { return t.name; });
+      topChart.setOption({
+        tooltip: { trigger: 'axis' },
+        grid: { left: 100, right: 20, top: 20, bottom: 20 },
+        xAxis: { type: 'value' },
+        yAxis: { type: 'category', data: names },
+        series: [{ name: '销量', type: 'bar', data: summary.value.top5.map(function (t) { return t.qty; }), itemStyle: { color: '#67c23a' } }]
+      });
+    }
+  }
+
+  async function openMobileQr() {
+    try {
+      const d = await api.get('/dashboard/mobile-url');
+      mobileUrl.value = d.url;
+      mobileHttpUrl.value = d.httpUrl || '';
+      mobileHttps.value = !!d.https;
+    } catch (e) { return; }
+    qrDialog.value = true;
+    nextTick(function () {
+      var box = document.getElementById('mobile-qr-box');
+      if (!box || !window.QRCode) return;
+      box.innerHTML = '';
+      new QRCode(box, { text: mobileUrl.value, width: 220, height: 220, correctLevel: QRCode.CorrectLevel.M });
+    });
+  }
+
+  onMounted(load);
+
+  return { summary, trendEl, topEl, common, goPage, qrDialog, mobileUrl, mobileHttpUrl, mobileHttps, openMobileQr };
+}
+</script>

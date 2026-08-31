@@ -1,0 +1,57 @@
+<div>
+  <div class="page-card">
+    <div class="toolbar">
+      <el-input v-model="keyword" placeholder="操作人 / 模块 / 动作 / 对象" clearable style="width:220px;" @keyup.enter="search" />
+      <el-date-picker v-model="dateFrom" type="date" value-format="YYYY-MM-DD" placeholder="开始日期" clearable style="width:150px;" />
+      <span style="margin:0 4px;color:#999;">至</span>
+      <el-date-picker v-model="dateTo" type="date" value-format="YYYY-MM-DD" placeholder="结束日期" clearable style="width:150px;" />
+      <el-button type="primary" @click="search">查询</el-button>
+    </div>
+    <div class="table-wrap">
+      <el-table :data="list" v-loading="loading" border size="small">
+        <el-table-column label="时间" prop="createdAt" width="160" />
+        <el-table-column label="操作人" prop="userName" width="100" />
+        <el-table-column label="模块" width="110"><template #default="{ row }"><el-tag size="small" type="info">{{ row.module }}</el-tag></template></el-table-column>
+        <el-table-column label="动作" prop="action" width="130" />
+        <el-table-column label="操作对象" min-width="200"><template #default="{ row }">{{ row.target || '-' }}</template></el-table-column>
+        <el-table-column label="IP" width="140"><template #default="{ row }">{{ row.ip || '-' }}</template></el-table-column>
+      </el-table>
+    </div>
+    <div class="pagination-wrap">
+      <el-pagination
+        v-model:current-page="page" v-model:page-size="pageSize" :total="total"
+        :page-sizes="[10,20,50]" layout="total, sizes, prev, pager, next" @size-change="load" @current-change="load" />
+    </div>
+    <div class="muted" style="margin-top:8px;">日志不可删除，仅管理员可查看。</div>
+  </div>
+</div>
+
+<script page-setup>
+function pageSetup(deps) {
+  const { ref, onMounted } = Vue;
+  const { api } = deps;
+  const list = ref([]); const loading = ref(false);
+  const keyword = ref(''); const dateFrom = ref(''); const dateTo = ref('');
+  const page = ref(1); const pageSize = ref(20); const total = ref(0);
+
+  async function load() {
+    loading.value = true;
+    const { from, to } = deps.common.normalizeDatePair(dateFrom.value, dateTo.value);
+    const params = {
+      keyword: keyword.value,
+      page: page.value, pageSize: pageSize.value,
+    };
+    if (from) params.dateFrom = from;
+    if (to) params.dateTo = to;
+    try {
+      const res = await api.get('/logs', { params });
+      list.value = res.list || []; total.value = res.total || 0;
+    } catch(e) {}
+    finally { loading.value = false; }
+  }
+  function search() { page.value = 1; load(); }
+
+  onMounted(load);
+  return { list, loading, keyword, dateFrom, dateTo, page, pageSize, total, load, search };
+}
+</script>

@@ -1,0 +1,213 @@
+<div>
+  <el-tabs v-model="tab">
+    <!-- 日销售报表 -->
+    <el-tab-pane label="日销售报表" name="daily">
+      <div class="page-card">
+        <div class="toolbar">
+          <el-date-picker v-model="dailyDate" type="date" value-format="YYYY-MM-DD" />
+          <el-button type="primary" @click="loadDaily">查询</el-button>
+          <el-button @click="exportDaily">导出</el-button>
+        </div>
+        <div class="stat-row">
+          <div class="stat-card"><div class="label">销售额</div><div class="value">{{ common.money(daily?.summary?.sales) }}</div></div>
+          <div class="stat-card success"><div class="label">订单数</div><div class="value">{{ daily?.summary?.orders || 0 }}</div></div>
+          <div class="stat-card"><div class="label">客单价</div><div class="value">{{ common.money(daily?.summary?.avg) }}</div></div>
+          <div class="stat-card warn"><div class="label">毛利</div><div class="value">{{ common.money(daily?.summary?.profit) }}</div></div>
+        </div>
+        <div class="chart-box"><div ref="dailyEl" style="height:300px;"></div></div>
+        <div class="table-wrap" style="margin-top:14px;">
+          <el-table :data="daily?.top5 || []" border size="small">
+            <el-table-column label="商品" prop="name" /><el-table-column label="销量" prop="qty" width="120" /><el-table-column label="金额" width="120"><template #default="{ row }">{{ common.money(row.amount) }}</template></el-table-column>
+          </el-table>
+        </div>
+      </div>
+    </el-tab-pane>
+
+    <!-- 月销售报表 -->
+    <el-tab-pane label="月销售报表" name="monthly">
+      <div class="page-card">
+        <div class="toolbar">
+          <el-date-picker v-model="monthVal" type="month" value-format="YYYY-MM" />
+          <el-button type="primary" @click="loadMonthly">查询</el-button>
+        </div>
+        <div class="stat-row">
+          <div class="stat-card"><div class="label">月度销售总额</div><div class="value">{{ common.money(monthly?.total) }}</div></div>
+        </div>
+        <div class="chart-box"><div ref="monthlyEl" style="height:320px;"></div></div>
+      </div>
+    </el-tab-pane>
+
+    <!-- 利润分析 -->
+    <el-tab-pane label="利润分析" name="profit">
+      <div class="page-card">
+        <div class="toolbar">
+          <el-date-picker v-model="profitFrom" type="date" value-format="YYYY-MM-DD" placeholder="开始日期" clearable style="width:150px;" />
+          <span style="margin:0 4px;color:#999;">至</span>
+          <el-date-picker v-model="profitTo" type="date" value-format="YYYY-MM-DD" placeholder="结束日期" clearable style="width:150px;" />
+          <el-button type="primary" @click="loadProfit">查询</el-button>
+        </div>
+        <div class="stat-row">
+          <div class="stat-card"><div class="label">销售额</div><div class="value">{{ common.money(profit?.sales) }}</div></div>
+          <div class="stat-card warn"><div class="label">成本</div><div class="value">{{ common.money(profit?.cost) }}</div></div>
+          <div class="stat-card success"><div class="label">毛利</div><div class="value">{{ common.money(profit?.profit) }}</div></div>
+          <div class="stat-card"><div class="label">毛利率</div><div class="value">{{ profitRate }}%</div></div>
+        </div>
+        <div class="chart-box"><div ref="profitEl" style="height:320px;"></div></div>
+      </div>
+    </el-tab-pane>
+
+    <!-- 供应商对账 -->
+    <el-tab-pane label="供应商对账" name="supplier">
+      <div class="page-card">
+        <div class="toolbar">
+          <el-select v-model="supplierId" placeholder="选择供应商" filterable style="width:220px;">
+            <el-option v-for="s in suppliers" :key="s.id" :label="s.name" :value="s.id" />
+          </el-select>
+          <el-date-picker v-model="supplierFrom" type="date" value-format="YYYY-MM-DD" placeholder="开始日期" clearable style="width:150px;" />
+          <span style="margin:0 4px;color:#999;">至</span>
+          <el-date-picker v-model="supplierTo" type="date" value-format="YYYY-MM-DD" placeholder="结束日期" clearable style="width:150px;" />
+          <el-button type="primary" @click="loadStatement">生成对账单</el-button>
+          <el-button @click="exportStatement">导出</el-button>
+        </div>
+        <div class="table-wrap">
+          <el-table :data="statement?.items || []" border size="small">
+            <el-table-column label="单号" prop="orderNo" width="160" /><el-table-column label="供应商" prop="supplierName" /><el-table-column label="数量" prop="totalQty" width="90" /><el-table-column label="金额" width="120"><template #default="{ row }">{{ common.money(row.totalAmount) }}</template></el-table-column><el-table-column label="日期" prop="createdAt" width="160" />
+          </el-table>
+        </div>
+        <div style="margin-top:10px;text-align:right;">对账合计 <b class="cart-total">{{ common.money(statement?.total) }}</b></div>
+      </div>
+    </el-tab-pane>
+
+    <!-- 赊账汇总 -->
+    <el-tab-pane label="赊账汇总" name="credit">
+      <div class="page-card">
+        <div class="toolbar">
+          <el-date-picker v-model="creditFrom" type="date" value-format="YYYY-MM-DD" placeholder="开始日期" clearable style="width:150px;" />
+          <span style="margin:0 4px;color:#999;">至</span>
+          <el-date-picker v-model="creditTo" type="date" value-format="YYYY-MM-DD" placeholder="结束日期" clearable style="width:150px;" />
+          <el-button type="primary" @click="loadCredit">查询</el-button>
+        </div>
+        <div class="stat-row">
+          <div class="stat-card danger"><div class="label">赊账总额</div><div class="value">{{ common.money(creditSum?.totalCredit) }}</div></div>
+          <div class="stat-card warn"><div class="label">未结清</div><div class="value">{{ creditSum?.unsettled || 0 }} 笔</div></div>
+          <div class="stat-card success"><div class="label">已结清</div><div class="value">{{ creditSum?.settled || 0 }} 笔</div></div>
+        </div>
+        <div class="muted" style="margin-top:8px;">明细请前往「赊账管理」页面查看与结清。</div>
+      </div>
+    </el-tab-pane>
+  </el-tabs>
+</div>
+
+<script page-setup>
+function pageSetup(deps) {
+  const { ref, computed, watch, nextTick } = Vue;
+  const { api, common, toast, goPage } = deps;
+
+  const tab = ref('daily');
+
+  // 日销售
+  const dailyDate = ref(common.formatDate(new Date()));
+  const daily = ref(null); const dailyEl = ref(null);
+  async function loadDaily() {
+    try { daily.value = await api.get('/reports/daily-sales', { params: { date: dailyDate.value } }); nextTick(renderDaily); } catch(e){}
+  }
+  function renderDaily() {
+    if (!daily.value || !dailyEl.value) return;
+    echarts.init(dailyEl.value).setOption({
+      tooltip: { trigger: 'axis' }, grid: { left: 50, right: 20, top: 30, bottom: 30 },
+      xAxis: { type: 'category', data: daily.value.trend.map(t=>t.date) },
+      yAxis: { type: 'value' },
+      series: [{ name: '销售额', type: 'bar', data: daily.value.trend.map(t=>t.sales), itemStyle: { color: '#409eff' } }]
+    });
+  }
+  function exportDaily() {
+    if (!daily.value) return;
+    const header = ['商品','销量','金额']; const lines = [header.join(',')];
+    (daily.value.top5||[]).forEach(r => lines.push([r.name,r.qty,r.amount].map(v=>'"'+v+'"').join(',')));
+    common.downloadBlob(new Blob(['\ufeff'+lines.join('\n')], {type:'text/csv;charset=utf-8'}), '日销售Top5.csv');
+    toast('已导出','success');
+  }
+
+  // 月销售
+  const monthVal = ref(common.formatDate(new Date()).slice(0,7));
+  const monthly = ref(null); const monthlyEl = ref(null);
+  async function loadMonthly() {
+    try { monthly.value = await api.get('/reports/monthly-sales', { params: { month: monthVal.value } }); nextTick(renderMonthly); } catch(e){}
+  }
+  function renderMonthly() {
+    if (!monthly.value || !monthlyEl.value) return;
+    echarts.init(monthlyEl.value).setOption({
+      tooltip: { trigger: 'axis' }, grid: { left: 50, right: 20, top: 30, bottom: 30 },
+      xAxis: { type: 'category', data: monthly.value.days.map(d=>d.date) },
+      yAxis: { type: 'value' },
+      series: [{ name: '日销售额', type: 'bar', data: monthly.value.days.map(d=>d.sales), itemStyle: { color: '#67c23a' } }]
+    });
+  }
+
+  // 利润分析
+  const profitFrom = ref(''); const profitTo = ref(''); const profit = ref(null); const profitEl = ref(null);
+  const profitRate = computed(() => profit.value && profit.value.sales ? (profit.value.profitRate * 100).toFixed(2) : '0.00');
+  async function loadProfit() {
+    const { from, to } = common.normalizeDatePair(profitFrom.value, profitTo.value);
+    const params = {};
+    if (from) params.dateFrom = from;
+    if (to) params.dateTo = to;
+    try { profit.value = await api.get('/reports/profit', { params }); nextTick(renderProfit); } catch(e){}
+  }
+  function renderProfit() {
+    if (!profit.value || !profitEl.value) return;
+    echarts.init(profitEl.value).setOption({
+      tooltip: { trigger: 'item' },
+      series: [{ type: 'pie', radius: ['40%','70%'], data: profit.value.byCategory.map(c => ({ name: c.category, value: c.profit })) }]
+    });
+  }
+
+  // 供应商对账
+  const suppliers = ref([]); const supplierId = ref(null); const statement = ref(null);
+  const supplierFrom = ref(''); const supplierTo = ref('');
+  async function loadSuppliers() { try { const r = await api.get('/suppliers', { params: { pageSize: 200 } }); suppliers.value = r.list||[]; } catch(e){} }
+  async function loadStatement() {
+    if (!supplierId.value) { toast('请选择供应商','warning'); return; }
+    const { from, to } = common.normalizeDatePair(supplierFrom.value, supplierTo.value);
+    const params = { supplierId: supplierId.value };
+    if (from) params.dateFrom = from;
+    if (to) params.dateTo = to;
+    try { statement.value = await api.get('/reports/supplier-statement', { params }); } catch(e){}
+  }
+  function exportStatement() {
+    const s = statement.value;
+    if (!s || !(s.items||[]).length) { toast('暂无可导出的对账数据','warning'); return; }
+    const sup = suppliers.value.find(x => x.id === supplierId.value);
+    const lines = [['单号','时间','数量','金额'].join(',')];
+    s.items.forEach(r => lines.push([r.orderNo, r.createdAt, r.totalQty, r.totalAmount].map(v => '"'+v+'"').join(',')));
+    lines.push(['合计','','','"'+s.total+'"'].join(','));
+    const fname = '对账单_' + (sup ? sup.name : '').replace(/[\\/:*?"<>|]/g, '') + '.csv';
+    common.downloadBlob(new Blob(['\ufeff'+lines.join('\n')], {type:'text/csv;charset=utf-8'}), fname);
+    toast('已导出','success');
+  }
+
+  // 赊账汇总
+  const creditSum = ref(null); const creditFrom = ref(''); const creditTo = ref('');
+  async function loadCredit() {
+    const { from, to } = common.normalizeDatePair(creditFrom.value, creditTo.value);
+    const params = {};
+    if (from) params.dateFrom = from;
+    if (to) params.dateTo = to;
+    try { creditSum.value = await api.get('/reports/credit-summary', { params }); } catch(e){}
+  }
+
+  watch(tab, (t) => {
+    if (t === 'monthly' && !monthly.value) loadMonthly();
+    if (t === 'profit' && !profit.value) loadProfit();
+    if (t === 'supplier' && !suppliers.value.length) loadSuppliers();
+    if (t === 'credit' && !creditSum.value) loadCredit();
+  });
+
+  loadDaily(); loadSuppliers(); loadCredit();
+  return { tab, dailyDate, daily, dailyEl, loadDaily, exportDaily,
+    monthVal, monthly, monthlyEl, loadMonthly,
+    profitFrom, profitTo, profit, profitRate, profitEl, loadProfit,
+    suppliers, supplierId, supplierFrom, supplierTo, statement, loadStatement, exportStatement,
+    creditFrom, creditTo, creditSum, loadCredit, common, toast, goPage };
+}
+</script>

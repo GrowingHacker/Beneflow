@@ -1,0 +1,100 @@
+<div>
+  <div class="page-card">
+    <div class="toolbar">
+      <el-button type="primary" @click="openCreate">+ 新建盘点单</el-button>
+      <div class="grow"></div>
+    </div>
+    <div class="table-wrap">
+      <el-table :data="list" border size="small">
+        <el-table-column label="单号" prop="orderNo" width="160" />
+        <el-table-column label="范围" prop="range" min-width="160" />
+        <el-table-column label="商品数" prop="itemCount" width="90" />
+        <el-table-column label="盘盈" width="80"><template #default="{ row }"><span class="success-text">{{ row.profit || 0 }}</span></template></el-table-column>
+        <el-table-column label="盘亏" width="80"><template #default="{ row }"><span class="danger-text">{{ row.loss || 0 }}</span></template></el-table-column>
+        <el-table-column label="状态" width="90"><template #default="{ row }"><el-tag :type="row.status === '已确认' ? 'success' : 'warning'" size="small">{{ row.status }}</el-tag></template></el-table-column>
+        <el-table-column label="操作人" prop="createdByName" width="100" />
+        <el-table-column label="创建时间" prop="createdAt" width="160" />
+        <el-table-column label="操作" width="110" fixed="right" align="center">
+          <template #default="{ row }">
+            <div class="op-btns">
+              <el-button text type="primary" title="明细" @click="toast('盘点明细待接入', 'info')"><el-icon><View /></el-icon></el-button>
+              <el-button v-if="row.status === '草稿'" text type="success" title="确认盘点" @click="confirmCheck(row)"><el-icon><CircleCheck /></el-icon></el-button>
+            </div>
+          </template>
+        </el-table-column>
+      </el-table>
+    </div>
+  </div>
+
+  <el-dialog v-model="createDialog" title="新建盘点单" width="780px" @open="onOpen">
+    <div class="toolbar">
+      <span>盘点范围：</span>
+      <el-select v-model="form.range" style="width:200px;">
+        <el-option label="全部商品" value="全部商品" />
+        <el-option label="仅库存预警" value="仅库存预警" />
+        <el-option label="仅临期商品" value="仅临期商品" />
+      </el-select>
+      <el-button @click="loadStockForCheck">载入商品</el-button>
+    </div>
+    <div class="table-wrap">
+      <el-table :data="form.items" size="small" border max-height="380" empty-text="点击“载入商品”列出账面库存">
+      <el-table-column label="商品" min-width="160"><template #default="{ row }">{{ row.name }}<div class="muted" style="font-size:12px;">{{ row.barcode }}</div></template></el-table-column>
+      <el-table-column label="账面库存" prop="bookQty" width="100" />
+      <el-table-column label="实际数量" width="140"><template #default="{ row }"><el-input-number v-model="row.actualQty" :min="0" size="small" controls-position="right" @change="calcDiff(row)" /></template></el-table-column>
+      <el-table-column label="差异" width="100"><template #default="{ row }"><span :class="(row.actualQty - row.bookQty) >= 0 ? 'success-text' : 'danger-text'">{{ (row.actualQty - row.bookQty) >= 0 ? '+' : '' }}{{ row.actualQty - row.bookQty }}</span></template></el-table-column>
+      </el-table>
+    </div>
+    <template #footer>
+      <el-button @click="createDialog=false">取消</el-button>
+      <el-button @click="saveDraft">存草稿</el-button>
+      <el-button type="primary" :loading="submitting" @click="submitAndConfirm">提交并确认</el-button>
+    </template>
+  </el-dialog>
+</div>
+
+<script page-setup>
+function pageSetup(deps) {
+  const { ref, onMounted } = Vue;
+  const { api, common, toast, confirm } = deps;
+
+  const list = ref([
+    { orderNo: 'SC20260820001', range: '全部商品', itemCount: 8, profit: 0, loss: 2, status: '已确认', createdByName: '仓库员', createdAt: '2026-08-20 17:00' },
+    { orderNo: 'SC20260825001', range: '仅临期商品', itemCount: 3, profit: 0, loss: 0, status: '草稿', createdByName: '仓库员', createdAt: '2026-08-25 09:30' },
+  ]);
+
+  const createDialog = ref(false); const submitting = ref(false);
+  const form = ref({ range: '全部商品', items: [] });
+
+  function onOpen() { form.value = { range: '全部商品', items: [] }; }
+  function openCreate() { form.value = { range: '全部商品', items: [] }; createDialog.value = true; }
+  async function loadStockForCheck() {
+    try {
+      const res = await api.get('/stocks', { params: { pageSize: 100 } });
+      form.value.items = (res.list||[]).map(p => ({ id: p.id, barcode: p.barcode, name: p.name, bookQty: p.stockQuantity, actualQty: p.stockQuantity }));
+      toast('已载入 ' + form.value.items.length + ' 件商品', 'success');
+    } catch(e){}
+  }
+  function calcDiff(row) {}
+  async function saveDraft() {
+    if (!form.value.items.length) { toast('请先载入商品','warning'); return; }
+    try { await api.post('/stocks/check', { range: form.value.range, items: form.value.items, status: '草稿' }); toast('草稿已保存','success'); createDialog.value = false; } catch(e){}
+  }
+  async function submitAndConfirm() {
+    if (!form.value.items.length) { toast('请先载入商品','warning'); return; }
+    submitting.value = true;
+    try {
+      const res = await api.post('/stocks/check', { range: form.value.range, items: form.value.items, status: '已确认' });
+      await api.post('/stocks/check/' + (res.id||0) + '/confirm');
+      toast('盘点已确认，库存已调整','success');
+      createDialog.value = false;
+    } catch(e){}
+    finally { submitting.value = false; }
+  }
+  async function confirmCheck(row) {
+    try { await confirm('确认盘点「'+row.orderNo+'」？确认后将调整库存。'); } catch(e){ return; }
+    try { await api.post('/stocks/check/' + (row.id||0) + '/confirm'); row.status = '已确认'; toast('已确认','success'); } catch(e){}
+  }
+
+  return { list, createDialog, submitting, form, onOpen, openCreate, loadStockForCheck, calcDiff, saveDraft, submitAndConfirm, confirmCheck, common, toast };
+}
+</script>

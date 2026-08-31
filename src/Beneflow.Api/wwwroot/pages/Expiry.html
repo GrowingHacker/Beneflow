@@ -1,0 +1,63 @@
+<div>
+  <div class="page-card">
+    <div class="toolbar">
+      <el-radio-group v-model="filter" @change="load">
+        <el-radio-button label="7">7 天内</el-radio-button>
+        <el-radio-button label="30">30 天内</el-radio-button>
+        <el-radio-button label="expired">已过期</el-radio-button>
+        <el-radio-button label="processed">已处理</el-radio-button>
+      </el-radio-group>
+      <div class="grow"></div>
+      <el-button @click="exportList">导出</el-button>
+    </div>
+    <div class="table-wrap">
+      <el-table :data="list" v-loading="loading" border size="small">
+        <el-table-column label="条码" prop="barcode" width="150" />
+        <el-table-column label="名称" prop="name" min-width="160" />
+        <el-table-column label="库存" prop="quantity" width="80" />
+        <el-table-column label="有效期至" width="120"><template #default="{ row }"><span :class="expireClass(row)">{{ row.expireDate }}</span></template></el-table-column>
+        <el-table-column label="剩余天数" width="100"><template #default="{ row }">{{ row.daysLeft }}</template></el-table-column>
+        <el-table-column label="操作" width="90" align="center">
+          <template #default="{ row }">
+            <el-tag v-if="row.isProcessed" type="info" size="small">已处理</el-tag>
+            <el-button v-else text type="warning" title="标记已处理" @click="markHandled(row)"><el-icon><Finished /></el-icon></el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </div>
+  </div>
+</div>
+
+<script page-setup>
+function pageSetup(deps) {
+  const { ref, onMounted } = Vue;
+  const { api, common, toast } = deps;
+  const list = ref([]); const loading = ref(false);
+  const filter = ref('30');
+
+  function expireClass(row) { return row.daysLeft < 0 ? 'danger-text' : row.daysLeft < 7 ? 'danger-text' : 'warn-text'; }
+
+  async function load() {
+    loading.value = true;
+    try { const res = await api.get('/stocks/expiry', { params: { tag: filter.value, pageSize: 500 } }); list.value = res.list||[]; } catch(e){}
+    finally { loading.value = false; }
+  }
+  async function markHandled(row) {
+    try {
+      await api.post('/stocks/expiry/mark-processed', [row.id]);
+      toast('已标记「'+row.name+'」为已处理','success');
+      load();
+    } catch(e){}
+  }
+  function exportList() {
+    if (!list.value.length) { toast('无数据','warning'); return; }
+    const header = ['条码','名称','库存','有效期至','剩余天数'];
+    const lines = [header.join(',')];
+    list.value.forEach(r => lines.push([r.barcode,r.name,r.quantity,r.expireDate,r.daysLeft].map(v=>'"'+(v==null?'':v)+'"').join(',')));
+    common.downloadBlob(new Blob(['\ufeff'+lines.join('\n')], {type:'text/csv;charset=utf-8'}), '临期商品.csv');
+    toast('已导出','success');
+  }
+  onMounted(load);
+  return { list, loading, filter, expireClass, markHandled, exportList, common, toast };
+}
+</script>

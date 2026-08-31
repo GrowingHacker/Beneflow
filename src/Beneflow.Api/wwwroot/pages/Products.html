@@ -1,0 +1,252 @@
+<div>
+  <div class="page-card">
+    <div class="toolbar">
+      <el-input v-model="keyword" placeholder="商品名称 / 条码" clearable style="width:220px;" @keyup.enter="search" />
+      <el-button type="primary" @click="search">查询</el-button>
+      <el-button @click="reset">重置</el-button>
+      <div class="grow"></div>
+      <el-button type="success" @click="openCreate">+ 新增商品</el-button>
+      <el-button @click="exportCsv">导出 CSV</el-button>
+    </div>
+
+    <div class="table-wrap">
+      <el-table :data="list" v-loading="loading" border stripe size="small">
+        <el-table-column label="条码" prop="barcode" width="150" />
+        <el-table-column label="名称" prop="name" min-width="160" />
+        <el-table-column label="分类" prop="categoryName" width="90" />
+        <el-table-column label="单位" prop="unit" width="60" />
+        <el-table-column label="规格" prop="spec" width="90" />
+        <el-table-column label="售价" width="80">
+          <template #default="{ row }">{{ common.money(row.salePrice) }}</template>
+        </el-table-column>
+        <el-table-column label="成本" width="80">
+          <template #default="{ row }">{{ common.money(row.costPrice) }}</template>
+        </el-table-column>
+        <el-table-column label="库存" prop="stockQuantity" width="70" />
+        <el-table-column label="有效期" width="110">
+          <template #default="{ row }">
+            <el-tag v-if="row.expireDate" :type="expireTag(row)" size="small">{{ row.expireDate }}</el-tag>
+            <span v-else class="muted">—</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" width="80">
+          <template #default="{ row }">
+            <el-tag :type="row.status === '上架' ? 'success' : 'info'" size="small">{{ row.status }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="150" fixed="right" align="center">
+          <template #default="{ row }">
+            <div class="op-btns">
+              <el-button text type="primary" title="编辑" @click="openEdit(row)"><el-icon><Edit /></el-icon></el-button>
+              <el-button text :type="row.status === '上架' ? 'warning' : 'success'" :title="row.status === '上架' ? '下架' : '上架'" @click="toggleStatus(row)">
+                <el-icon><component :is="row.status === '上架' ? 'SoldOut' : 'Sell'" /></el-icon>
+              </el-button>
+              <el-button text type="danger" title="删除" @click="remove(row)"><el-icon><Delete /></el-icon></el-button>
+            </div>
+          </template>
+        </el-table-column>
+      </el-table>
+    </div>
+
+    <div class="pagination-wrap">
+      <el-pagination
+        v-model:current-page="page" v-model:page-size="pageSize"
+        :total="total" :page-sizes="[10,20,50]" layout="total, sizes, prev, pager, next"
+        @size-change="load" @current-change="load" />
+    </div>
+  </div>
+
+  <el-dialog v-model="dialog" :title="form.id ? '编辑商品' : '新增商品'" width="640px">
+    <el-form :model="form" label-width="90px">
+      <el-row :gutter="12">
+        <el-col :span="12"><el-form-item label="条码"><el-input v-model="form.barcode" :disabled="!!form.id" placeholder="留空自动生成店内码" /></el-form-item></el-col>
+        <el-col :span="12"><el-form-item label="名称"><el-input v-model="form.name" /></el-form-item></el-col>
+        <el-col :span="12"><el-form-item label="分类">
+          <el-select v-model="form.categoryId" placeholder="选择分类，可输入新建" filterable allow-create default-first-option style="width:100%;">
+            <el-option v-for="c in cats" :key="c.id" :label="c.name" :value="c.id"></el-option>
+          </el-select>
+        </el-form-item></el-col>
+        <el-col :span="12"><el-form-item label="单位">
+          <el-select v-model="form.unit" placeholder="选择单位" filterable allow-create default-first-option clearable style="width:100%;">
+            <el-option v-for="u in unitOptions" :key="u" :label="u" :value="u"></el-option>
+          </el-select>
+        </el-form-item></el-col>
+        <el-col :span="12"><el-form-item label="规格">
+          <el-select v-model="form.spec" placeholder="选择或输入规格" filterable allow-create default-first-option clearable style="width:100%;">
+            <el-option v-for="s in specOptions" :key="s" :label="s" :value="s"></el-option>
+          </el-select>
+        </el-form-item></el-col>
+        <el-col :span="12"><el-form-item label="售价"><el-input v-model.number="form.salePrice" type="number" /></el-form-item></el-col>
+        <el-col :span="12"><el-form-item label="成本价"><el-input v-model.number="form.costPrice" type="number" /></el-form-item></el-col>
+        <el-col :span="12"><el-form-item label="初始库存"><el-input v-model.number="form.stockQuantity" type="number" /></el-form-item></el-col>
+        <el-col :span="12"><el-form-item label="安全库存"><el-input v-model.number="form.safetyStock" type="number" /></el-form-item></el-col>
+        <el-col :span="12"><el-form-item label="保质期天数"><el-input v-model.number="form.shelfLifeDays" type="number" /></el-form-item></el-col>
+        <el-col :span="24"><el-form-item label="备注"><el-input v-model="form.remark" type="textarea" :rows="2" /></el-form-item></el-col>
+      </el-row>
+    </el-form>
+    <template #footer>
+      <el-button @click="dialog=false">取消</el-button>
+      <el-button type="primary" @click="save">保存</el-button>
+    </template>
+  </el-dialog>
+</div>
+
+<script page-setup>
+function pageSetup(deps) {
+  const { ref, computed, watch, nextTick, onMounted } = Vue;
+  const { api, common, toast, confirm } = deps;
+
+  const list = ref([]);
+  const loading = ref(false);
+  const keyword = ref('');
+  const page = ref(1);
+  const pageSize = ref(20);
+  const total = ref(0);
+
+  const dialog = ref(false);
+  const form = ref({});
+
+  const cats = ref([]);
+  const units = ref([]);
+  const specs = ref([]);
+  const catDict = ref({});   // 分类专属字典：{ 分类名: { units:[], specs:[] } }
+
+  function emptyForm() {
+    return { barcode:'', name:'', categoryId:'', categoryName:'', unit:'个', spec:'', salePrice:0, costPrice:0, stockQuantity:0, safetyStock:0, shelfLifeDays:0, remark:'', status:'上架' };
+  }
+
+  async function loadCats() {
+    try { cats.value = (await api.get('/categories')) || []; } catch (e) {}
+  }
+
+  // 单位/规格字典：来自系统设置（SystemConfigs 表，系统设置→数据字典 可维护）
+  async function loadDicts() {
+    try {
+      const s = await api.get('/settings');
+      units.value = s.units || [];
+      specs.value = s.specs || [];
+      catDict.value = s.categoryDict || {};
+    } catch (e) {}
+  }
+
+  // 当前表单选中的分类名（数字 id → 查分类表；allow-create 的字符串直接作为名字）
+  const catName = computed(function () {
+    const id = form.value.categoryId;
+    if (id === '' || id == null) return '';
+    if (typeof id === 'string') return id.trim();
+    const c = (cats.value || []).find(function (x) { return x.id === id; });
+    return c ? c.name : '';
+  });
+
+  // 分类联动：配置了专属字典的分类只显示其 units/specs，否则用全局字典
+  const unitOptions = computed(function () {
+    const cfg = catName.value ? catDict.value[catName.value] : null;
+    return (cfg && cfg.units && cfg.units.length) ? cfg.units : units.value;
+  });
+  const specOptions = computed(function () {
+    const cfg = catName.value ? catDict.value[catName.value] : null;
+    return (cfg && cfg.specs && cfg.specs.length) ? cfg.specs : specs.value;
+  });
+
+  // 切换分类后，当前单位/规格不在新范围内则清空待重选（打开弹窗的首次赋值除外）
+  let suppressCatWatch = false;
+  watch(function () { return form.value.categoryId; }, function () {
+    if (suppressCatWatch) return;
+    if (form.value.unit && unitOptions.value.indexOf(form.value.unit) < 0) form.value.unit = '';
+    if (form.value.spec && specOptions.value.indexOf(form.value.spec) < 0) form.value.spec = '';
+  });
+
+  async function load() {
+    loading.value = true;
+    try {
+      const res = await api.get('/products', { params: { keyword: keyword.value, page: page.value, pageSize: pageSize.value } });
+      list.value = res.list || [];
+      total.value = res.total || 0;
+    } catch (e) {}
+    finally { loading.value = false; }
+  }
+  function search() { page.value = 1; load(); }
+  function reset() { keyword.value = ''; page.value = 1; load(); }
+
+  function openCreate() {
+    suppressCatWatch = true;
+    form.value = emptyForm(); dialog.value = true;
+    nextTick(function () { suppressCatWatch = false; });
+  }
+  function openEdit(row) {
+    suppressCatWatch = true;
+    form.value = JSON.parse(JSON.stringify(row)); dialog.value = true;
+    nextTick(function () { suppressCatWatch = false; });
+  }
+
+  async function save() {
+    const f = form.value;
+    if (!f.name) { toast('请填写名称', 'warning'); return; }
+    if (typeof f.categoryId === 'string') { f.categoryName = f.categoryId.trim(); f.categoryId = 0; }
+    if (!f.categoryId && !f.categoryName) { toast('请选择分类', 'warning'); return; }
+    if (!f.unit) { toast('请选择单位', 'warning'); return; }
+    if (f.salePrice < 0 || f.costPrice < 0) { toast('价格不能为负', 'warning'); return; }
+    // 允许创建的自定义单位/规格：保存商品后回写字典——分类有专属配置→写入该分类，否则写全局
+    const cname = catName.value;
+    const hasCfg = !!(cname && catDict.value[cname]);
+    const newUnit = f.unit && unitOptions.value.indexOf(f.unit) < 0 ? f.unit : null;
+    const newSpec = f.spec && specOptions.value.indexOf(f.spec) < 0 ? f.spec : null;
+    try {
+      if (f.id) await api.put('/products/' + f.id, f);
+      else await api.post('/products', f);
+      if (newUnit || newSpec) {
+        const payload = {};
+        if (hasCfg) {
+          const cfg = catDict.value[cname];
+          if (newUnit) { cfg.units = cfg.units || []; if (cfg.units.indexOf(newUnit) < 0) cfg.units.push(newUnit); }
+          if (newSpec) { cfg.specs = cfg.specs || []; if (cfg.specs.indexOf(newSpec) < 0) cfg.specs.push(newSpec); }
+          payload.categoryDict = catDict.value;
+        } else {
+          if (newUnit) { units.value.push(newUnit); payload.units = units.value; }
+          if (newSpec) { specs.value.push(newSpec); payload.specs = specs.value; }
+        }
+        try { await api.put('/settings', payload); } catch (e) {}
+      }
+      toast('保存成功', 'success');
+      dialog.value = false;
+      load();
+    } catch (e) {}
+  }
+
+  async function toggleStatus(row) {
+    row.status = row.status === '上架' ? '下架' : '上架';
+    try { await api.put('/products/' + row.id, { status: row.status }); toast('已' + row.status, 'success'); }
+    catch (e) { row.status = row.status === '上架' ? '下架' : '上架'; }
+  }
+
+  async function remove(row) {
+    try { await confirm('确认删除商品「' + row.name + '」？'); } catch (e) { return; }
+    try { await api.delete('/products/' + row.id); toast('已删除', 'success'); load(); } catch (e) {}
+  }
+
+  function expireTag(row) {
+    if (!row.expireDate) return '';
+    const diff = (new Date(row.expireDate) - new Date()) / 86400000;
+    if (diff < 0) return 'danger';
+    if (diff < 7) return 'danger';
+    if (diff < 30) return 'warning';
+    return 'success';
+  }
+
+  function exportCsv() {
+    const rows = list.value;
+    if (!rows.length) { toast('没有可导出的数据', 'warning'); return; }
+    const header = ['条码','名称','分类','单位','规格','售价','成本','库存','有效期'];
+    const lines = [header.join(',')];
+    rows.forEach(function (r) {
+      lines.push([r.barcode, r.name, r.categoryName, r.unit, r.spec, r.salePrice, r.costPrice, r.stockQuantity, r.expireDate || ''].map(function (v) { return '"' + (v == null ? '' : v) + '"'; }).join(','));
+    });
+    common.downloadBlob(new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8' }), '商品列表.csv');
+    toast('已导出', 'success');
+  }
+
+  onMounted(function () { load(); loadCats(); loadDicts(); });
+  return { list, loading, keyword, page, pageSize, total, dialog, form, common, cats, unitOptions, specOptions,
+    load, search, reset, openCreate, openEdit, save, toggleStatus, remove, expireTag, exportCsv };
+}
+</script>

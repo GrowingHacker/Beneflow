@@ -1,0 +1,69 @@
+<div>
+  <div class="page-card">
+    <div class="toolbar">
+      <el-input v-model="orderNo" placeholder="输入原销售单号" clearable style="width:240px;" @keyup.enter="fetchOrder" />
+      <el-button type="primary" @click="fetchOrder">查询原单</el-button>
+    </div>
+    <div v-if="!order" class="empty-tip">请输入原销售单号查询后选择退货商品</div>
+    <div v-else>
+      <el-descriptions :column="2" border style="margin-bottom:14px;">
+        <el-descriptions-item label="单号">{{ order.orderNo }}</el-descriptions-item>
+        <el-descriptions-item label="原金额">{{ common.money(order.totalAmount) }}</el-descriptions-item>
+        <el-descriptions-item label="收款方式">{{ order.payMethod }}</el-descriptions-item>
+        <el-descriptions-item label="时间">{{ order.createdAt }}</el-descriptions-item>
+      </el-descriptions>
+      <div class="table-wrap">
+        <el-table :data="items" border size="small">
+          <el-table-column label="商品" prop="name" min-width="160" />
+          <el-table-column label="原数量" prop="qty" width="100" />
+          <el-table-column label="可退" width="100"><template #default="{ row }">{{ row.qty - (row.returnedQty||0) }}</template></el-table-column>
+          <el-table-column label="退货数量" width="160"><template #default="{ row }"><el-input-number v-model="row.returnQty" :min="0" :max="row.qty - (row.returnedQty||0)" size="small" controls-position="right" /></template></el-table-column>
+        </el-table>
+      </div>
+      <div style="margin-top:14px;">
+        <span>退款方式：</span>
+        <el-select v-model="refundMethod" style="width:140px;">
+          <el-option label="原路退回" value="原路退回" /><el-option label="现金" value="现金" /><el-option label="微信" value="微信" /><el-option label="支付宝" value="支付宝" />
+        </el-select>
+      </div>
+      <div style="margin-top:14px;text-align:right;">
+        退款合计 <b class="cart-total">{{ common.money(refundTotal) }}</b>
+        <el-button type="primary" :loading="submitting" style="margin-left:14px;" @click="submit">提交退货</el-button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script page-setup>
+function pageSetup(deps) {
+  const { ref, computed } = Vue;
+  const { api, common, toast } = deps;
+  const orderNo = ref(''); const order = ref(null); const items = ref([]);
+  const refundMethod = ref('原路退回'); const submitting = ref(false);
+
+  const refundTotal = computed(() => items.value.reduce((s,i)=>s+Number(i.returnQty||0)*Number(i.unitPrice||0),0));
+
+  async function fetchOrder() {
+    const no = (orderNo.value || '').trim();
+    if (!no) { toast('请输入单号','warning'); return; }
+    try {
+      const res = await api.get('/sales/by-no/' + encodeURIComponent(no));
+      if (res.status === '已退货') { toast('该销售单已整单退货，不能重复退','warning'); return; }
+      order.value = res;
+      items.value = (res.items || []).map(i => Object.assign({}, i, { returnQty: 0 }));
+    } catch(e){ order.value = null; items.value = []; }
+  }
+  async function submit() {
+    const sel = items.value.filter(i => i.returnQty > 0);
+    if (!sel.length) { toast('请填写退货数量','warning'); return; }
+    submitting.value = true;
+    try {
+      const res = await api.post('/sale-returns', { originalOrderNo: order.value.orderNo, items: sel.map(i => ({ detailId: i.id, name: i.name, qty: i.returnQty, unitPrice: i.unitPrice })), refundMethod: refundMethod.value, refundTotal: refundTotal.value });
+      toast('退货成功：' + res.orderNo, 'success');
+      order.value = null; orderNo.value = ''; items.value = [];
+    } catch(e){}
+    finally { submitting.value = false; }
+  }
+  return { orderNo, order, items, refundMethod, refundTotal, submitting, fetchOrder, submit, common, toast };
+}
+</script>

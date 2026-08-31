@@ -1,0 +1,130 @@
+<div>
+  <div class="page-card">
+    <div class="toolbar">
+      <el-input v-model="keyword" placeholder="单号 / 供应商" clearable style="width:220px;" @keyup.enter="search" />
+      <el-date-picker v-model="dateFrom" type="date" value-format="YYYY-MM-DD" placeholder="开始日期" clearable style="width:150px;" />
+      <span style="margin:0 4px;color:#999;">至</span>
+      <el-date-picker v-model="dateTo" type="date" value-format="YYYY-MM-DD" placeholder="结束日期" clearable style="width:150px;" />
+      <el-button type="primary" @click="search">查询</el-button>
+      <div class="grow"></div>
+      <el-button type="success" @click="openCreate">+ 新增进货单</el-button>
+    </div>
+    <div class="table-wrap">
+      <el-table :data="list" v-loading="loading" border size="small">
+        <el-table-column label="单号" prop="orderNo" width="160" />
+        <el-table-column label="供应商" prop="supplierName" width="150" />
+        <el-table-column label="种类数" prop="itemCount" width="80" />
+        <el-table-column label="总数量" prop="totalQty" width="90" />
+        <el-table-column label="总金额" width="110"><template #default="{ row }">{{ common.money(row.totalAmount) }}</template></el-table-column>
+        <el-table-column label="操作人" prop="createdByName" width="100" />
+        <el-table-column label="日期" prop="createdAt" width="160" />
+        <el-table-column label="操作" width="70" fixed="right" align="center"><template #default="{ row }"><el-button text type="primary" title="详情" @click="viewDetail(row)"><el-icon><View /></el-icon></el-button></template></el-table-column>
+      </el-table>
+    </div>
+    <div class="pagination-wrap">
+      <el-pagination
+        v-model:current-page="page" v-model:page-size="pageSize" :total="total"
+        :page-sizes="[10,20,50]" layout="total, sizes, prev, pager, next" @size-change="load" @current-change="load" />
+    </div>
+  </div>
+
+  <!-- 创建进货单 -->
+  <el-dialog v-model="createDialog" title="新增进货单" width="820px" @open="onOpen">
+    <div class="toolbar">
+      <span>供应商：</span>
+      <el-select v-model="form.supplierId" placeholder="选择供应商" filterable style="width:240px;">
+        <el-option v-for="s in suppliers" :key="s.id" :label="s.name" :value="s.id" />
+      </el-select>
+      <el-input v-model="pickKw" placeholder="商品名称/条码" style="width:200px;margin-left:10px;" @keyup.enter="searchPick" />
+      <el-button @click="searchPick">搜索商品</el-button>
+    </div>
+    <el-table :data="form.items" size="small" border empty-text="请添加商品">
+      <el-table-column label="商品" min-width="160"><template #default="{ row }">{{ row.name }}<div class="muted" style="font-size:12px;">{{ row.barcode }}</div></template></el-table-column>
+      <el-table-column label="数量" width="120"><template #default="{ row }"><el-input-number v-model="row.qty" :min="1" size="small" controls-position="right" /></template></el-table-column>
+      <el-table-column label="进价" width="120"><template #default="{ row }"><el-input-number v-model="row.costPrice" :min="0" :precision="2" size="small" controls-position="right" /></template></el-table-column>
+      <el-table-column label="小计" width="100"><template #default="{ row }">{{ common.money(row.qty * row.costPrice) }}</template></el-table-column>
+      <el-table-column label="操作" width="70" align="center"><template #default="{ $index }"><el-button text type="danger" title="移除" @click="form.items.splice($index,1)"><el-icon><Delete /></el-icon></el-button></template></el-table-column>
+    </el-table>
+    <div style="margin-top:10px;text-align:right;">
+      共 {{ form.items.reduce((s,i)=>s+Number(i.qty||0),0) }} 件，合计 <b class="cart-total">{{ common.money(form.items.reduce((s,i)=>s+Number(i.qty||0)*Number(i.costPrice||0),0)) }}</b>
+    </div>
+    <div style="margin-top:8px;">
+      <span class="muted">搜索结果（点击加入）：</span>
+      <el-button v-for="p in pickList" :key="p.id" size="small" style="margin:4px;" @click="addPick(p)">{{ p.name }}（{{ p.barcode }}）</el-button>
+    </div>
+    <template #footer>
+      <el-button @click="createDialog=false">取消</el-button>
+      <el-button type="primary" :loading="submitting" @click="submit">提交进货单</el-button>
+    </template>
+  </el-dialog>
+
+  <el-dialog v-model="detailDialog" title="进货单详情" width="640px">
+    <el-descriptions :column="2" border>
+      <el-descriptions-item label="单号">{{ detail.orderNo }}</el-descriptions-item>
+      <el-descriptions-item label="供应商">{{ detail.supplierName }}</el-descriptions-item>
+      <el-descriptions-item label="总数量">{{ detail.totalQty }}</el-descriptions-item>
+      <el-descriptions-item label="总金额">{{ common.money(detail.totalAmount) }}</el-descriptions-item>
+      <el-descriptions-item label="日期">{{ detail.createdAt }}</el-descriptions-item>
+      <el-descriptions-item label="操作人">{{ detail.createdByName }}</el-descriptions-item>
+    </el-descriptions>
+  </el-dialog>
+</div>
+
+<script page-setup>
+function pageSetup(deps) {
+  const { ref, onMounted } = Vue;
+  const { api, common, toast } = deps;
+
+  const list = ref([]); const loading = ref(false);
+  const keyword = ref(''); const dateFrom = ref(''); const dateTo = ref('');
+  const page = ref(1); const pageSize = ref(20); const total = ref(0);
+
+  async function load() {
+    loading.value = true;
+    const { from, to } = common.normalizeDatePair(dateFrom.value, dateTo.value);
+    const params = {
+      keyword: keyword.value,
+      page: page.value, pageSize: pageSize.value,
+    };
+    if (from) params.dateFrom = from;
+    if (to) params.dateTo = to;
+    try { const res = await api.get('/purchases', { params }); list.value = res.list||[]; total.value = res.total||0; } catch(e){}
+    finally { loading.value = false; }
+  }
+  function search() { page.value = 1; load(); }
+
+  const suppliers = ref([]);
+  const createDialog = ref(false);
+  const submitting = ref(false);
+  const form = ref({ supplierId: null, items: [] });
+  const pickKw = ref(''); const pickList = ref([]);
+  const detailDialog = ref(false); const detail = ref({});
+
+  async function onOpen() { if (!suppliers.value.length) { try { const r = await api.get('/suppliers', { params: { pageSize: 200 } }); suppliers.value = r.list||[]; } catch(e){} } }
+  function openCreate() { form.value = { supplierId: null, items: [] }; pickKw.value=''; pickList.value=[]; createDialog.value = true; }
+  async function searchPick() { try { const r = await api.get('/products', { params: { keyword: pickKw.value, pageSize: 20 } }); pickList.value = r.list||[]; } catch(e){} }
+  function addPick(p) {
+    if (form.value.items.find(i => i.id === p.id)) { toast('已在清单中', 'warning'); return; }
+    form.value.items.push({ id: p.id, barcode: p.barcode, name: p.name, qty: 1, costPrice: Number(p.costPrice) });
+  }
+  async function submit() {
+    const f = form.value;
+    if (!f.supplierId) { toast('请选择供应商', 'warning'); return; }
+    if (!f.items.length) { toast('请添加商品', 'warning'); return; }
+    submitting.value = true;
+    try {
+      const payload = { supplierId: f.supplierId, details: f.items.map(i=>({ productId:i.id, name:i.name, qty:i.qty, costPrice:i.costPrice })), totalQty: f.items.reduce((s,i)=>s+Number(i.qty||0),0), totalAmount: f.items.reduce((s,i)=>s+Number(i.qty||0)*Number(i.costPrice||0),0) };
+      const res = await api.post('/purchases', payload);
+      toast('进货单已提交：' + res.orderNo, 'success');
+      createDialog.value = false; load();
+    } catch(e){}
+    finally { submitting.value = false; }
+  }
+  function viewDetail(row) { detail.value = row; detailDialog.value = true; }
+
+  onMounted(load);
+  return { list, loading, keyword, dateFrom, dateTo, page, pageSize, total, load, search,
+    suppliers, createDialog, submitting, form, pickKw, pickList, detailDialog, detail,
+    onOpen, openCreate, searchPick, addPick, submit, viewDetail, common, toast };
+}
+</script>

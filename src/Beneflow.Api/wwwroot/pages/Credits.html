@@ -1,0 +1,98 @@
+<div>
+  <div class="stat-row">
+    <div class="stat-card danger"><div class="label">总欠款</div><div class="value">{{ common.money(totalCredit) }}</div></div>
+    <div class="stat-card warn"><div class="label">未结清笔数</div><div class="value">{{ unsettledCount }}</div></div>
+    <div class="stat-card success"><div class="label">已结清笔数</div><div class="value">{{ settledCount }}</div></div>
+  </div>
+  <div class="page-card">
+    <div class="toolbar">
+      <el-input v-model="wechatId" placeholder="顾客微信号" clearable style="width:200px;" @keyup.enter="search" />
+      <el-select v-model="statusFilter" placeholder="结清状态" clearable style="width:130px;">
+        <el-option label="未结清" value="未结清" /><el-option label="已结清" value="已结清" />
+      </el-select>
+      <el-button type="primary" @click="search">查询</el-button>
+      <el-button @click="exportList">导出</el-button>
+    </div>
+    <div class="table-wrap">
+      <el-table :data="filtered" v-loading="loading" border size="small">
+        <el-table-column label="微信号" prop="wechatId" width="140" />
+        <el-table-column label="关联单号" prop="saleOrderNo" width="160" />
+        <el-table-column label="欠款金额" width="110"><template #default="{ row }">{{ common.money(row.creditAmount) }}</template></el-table-column>
+        <el-table-column label="已还" width="100"><template #default="{ row }">{{ common.money(row.paidAmount) }}</template></el-table-column>
+        <el-table-column label="剩余" width="110"><template #default="{ row }"><span class="danger-text">{{ common.money(row.remainingAmount) }}</span></template></el-table-column>
+        <el-table-column label="状态" width="90"><template #default="{ row }"><el-tag :type="row.status === '已结清' ? 'success' : 'danger'" size="small">{{ row.status }}</el-tag></template></el-table-column>
+        <el-table-column label="赊账时间" prop="createdAt" width="160" />
+        <el-table-column label="操作" width="70" fixed="right" align="center"><template #default="{ row }"><el-button v-if="row.status === '未结清'" text type="success" title="结清" @click="openSettle(row)"><el-icon><Money /></el-icon></el-button></template></el-table-column>
+      </el-table>
+    </div>
+    <div class="pagination-wrap">
+      <el-pagination
+        v-model:current-page="page" v-model:page-size="pageSize" :total="total"
+        layout="total, prev, pager, next" @current-change="load" />
+    </div>
+  </div>
+
+  <el-dialog v-model="settleDialog" title="结清赊账" width="420px">
+    <div style="text-align:center;margin-bottom:14px;">
+      <div class="muted">顾客：{{ current?.wechatId }}</div>
+      <div class="cart-total" style="font-size:26px;">{{ common.money(current?.remainingAmount) }}</div>
+    </div>
+    <el-form label-width="90px">
+      <el-form-item label="还款方式">
+        <el-radio-group v-model="payMethod">
+          <el-radio-button label="微信">微信</el-radio-button>
+          <el-radio-button label="现金">现金</el-radio-button>
+          <el-radio-button label="支付宝">支付宝</el-radio-button>
+        </el-radio-group>
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="settleDialog=false">取消</el-button>
+      <el-button type="primary" :loading="settling" @click="confirmSettle">确认结清</el-button>
+    </template>
+  </el-dialog>
+</div>
+
+<script page-setup>
+function pageSetup(deps) {
+  const { ref, computed, onMounted } = Vue;
+  const { api, common, toast, confirm } = deps;
+  const list = ref([]); const loading = ref(false);
+  const wechatId = ref(''); const statusFilter = ref('');
+  const page = ref(1); const pageSize = ref(20); const total = ref(0);
+  const filtered = computed(() => statusFilter.value ? list.value.filter(r => r.status === statusFilter.value) : list.value);
+
+  const totalCredit = computed(() => list.value.filter(r=>r.status==='未结清').reduce((s,r)=>s+Number(r.remainingAmount||0),0));
+  const unsettledCount = computed(() => list.value.filter(r=>r.status==='未结清').length);
+  const settledCount = computed(() => list.value.filter(r=>r.status==='已结清').length);
+
+  async function load() {
+    loading.value = true;
+    try { const res = await api.get('/credits', { params: { wechatId: wechatId.value, page: page.value, pageSize: pageSize.value } }); list.value = res.list||[]; total.value = res.total||0; } catch(e){}
+    finally { loading.value = false; }
+  }
+  function search() { page.value = 1; load(); }
+
+  const settleDialog = ref(false); const current = ref(null); const payMethod = ref('微信'); const settling = ref(false);
+  function openSettle(row) { current.value = row; payMethod.value = '微信'; settleDialog.value = true; }
+  async function confirmSettle() {
+    try { await confirm('确认结清此笔赊账？'); } catch(e){ return; }
+    settling.value = true;
+    try { await api.post('/credits/' + current.value.id + '/settle', { payMethod: payMethod.value }); toast('已结清','success'); settleDialog.value = false; load(); } catch(e){}
+    finally { settling.value = false; }
+  }
+  function exportList() {
+    if (!filtered.value.length) { toast('无数据','warning'); return; }
+    const header = ['微信号','单号','欠款','已还','剩余','状态','赊账时间'];
+    const lines = [header.join(',')];
+    filtered.value.forEach(r => lines.push([r.wechatId,r.saleOrderNo,r.creditAmount,r.paidAmount,r.remainingAmount,r.status,r.createdAt].map(v=>'"'+(v==null?'':v)+'"').join(',')));
+    common.downloadBlob(new Blob(['\ufeff'+lines.join('\n')], {type:'text/csv;charset=utf-8'}), '赊账记录.csv');
+    toast('已导出','success');
+  }
+
+  onMounted(load);
+  return { list, loading, wechatId, statusFilter, filtered, page, pageSize, total,
+    totalCredit, unsettledCount, settledCount, load, search,
+    settleDialog, current, payMethod, settling, openSettle, confirmSettle, exportList, common, toast };
+}
+</script>

@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#1f2d3d" />
+  <title>百惠通 - 进货录入</title>
+  <link rel="stylesheet" href="/lib/element-plus/index.css" />
+  <link rel="stylesheet" href="/css/app.css" />
+  <script src="/lib/vue/vue.global.prod.js"></script>
+  <script src="/lib/element-plus/index.full.min.js"></script>
+  <script src="/lib/axios/axios.min.js"></script>
+  <script src="/lib/html5-qrcode/html5-qrcode.min.js"></script>
+  <style>
+    html, body { margin:0; padding:0; background:#f0f2f5; -webkit-tap-highlight-color:transparent; overflow-x:hidden; max-width:100vw; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    /* iPhone 刘海屏安全区适配 */
+    .m-header { background:#1f2d3d; color:#fff; padding: calc(12px + env(safe-area-inset-top)) 14px 12px; font-size:17px; font-weight:700; position:sticky; top:0; z-index:10; }
+    .m-card { background:#fff; border-radius:14px; padding:14px; margin:10px 12px; box-shadow:0 1px 4px rgba(0,0,0,.06); }
+    .m-label { color:#8a8f99; font-size:12.5px; margin-bottom:6px; font-weight:500; }
+    .muted { color:#909399; }
+    /* 扫码窗：撑满卡片宽度，视频 1:1 方型取景框（扫码识别率最高），边角更大 */
+    .scan-area { width:100%; aspect-ratio: 1 / 1; max-height: 340px; margin:10px 0 6px; position:relative; border-radius:12px; overflow:hidden; background:#000; }
+    #qr-reader { width:100% !important; height:100% !important; border:0 !important; }
+    #qr-reader > div:first-child { display:none; } /* html5-qrcode 默认上方横幅去掉，占高度 */
+    #qr-reader video { width:100% !important; height:100% !important; object-fit:cover; border-radius:0 !important; }
+    /* 扫描动画 + 四角边框 */
+    .scan-overlay { position:absolute; inset:0; pointer-events:none; }
+    .scan-overlay::before, .scan-overlay::after { content:""; position:absolute; width:28px; height:28px; border-color:#52c41a; border-style:solid; border-width:0; filter: drop-shadow(0 0 3px rgba(82,196,26,.7)); }
+    .scan-overlay::before { top:14px; left:14px; border-top-width:3.5px; border-left-width:3.5px; border-top-left-radius:4px; }
+    .scan-overlay::after  { bottom:14px; right:14px; border-bottom-width:3.5px; border-right-width:3.5px; border-bottom-right-radius:4px; }
+    .scan-overlay .corner-tr { position:absolute; top:14px; right:14px; width:28px; height:28px; border-top:3.5px solid #52c41a; border-right:3.5px solid #52c41a; border-top-right-radius:4px; filter: drop-shadow(0 0 3px rgba(82,196,26,.7)); }
+    .scan-overlay .corner-bl { position:absolute; bottom:14px; left:14px; width:28px; height:28px; border-bottom:3.5px solid #52c41a; border-left:3.5px solid #52c41a; border-bottom-left-radius:4px; filter: drop-shadow(0 0 3px rgba(82,196,26,.7)); }
+    .scan-overlay .torch-btn {
+      position:absolute; top:14px; right:54px;
+      width:40px; height:40px; border-radius:50%;
+      border:2px solid rgba(255,255,255,.85);
+      background:rgba(0,0,0,.45);
+      font-size:20px; line-height:1; padding:0;
+      display:flex; align-items:center; justify-content:center;
+      cursor:pointer; backdrop-filter:blur(2px);
+      transition: background .2s, transform .1s;
+    }
+    .scan-overlay .torch-btn:active { transform: scale(.9); }
+    .scan-overlay .torch-btn.on { background:rgba(255,180,0,.85); border-color:#fff; box-shadow:0 0 12px rgba(255,180,0,.7); }
+    .scan-line {
+      position:absolute; left:7%; right:7%; height:2.5px;
+      background:linear-gradient(90deg, transparent, #52c41a 15%, #a3ff99 50%, #52c41a 85%, transparent);
+      box-shadow:0 0 10px #52c41a, 0 0 22px rgba(82,196,26,.55);
+      border-radius:2px;
+      animation:scanMove 1.6s linear infinite;
+    }
+    @keyframes scanMove {
+      0%   { top:8%; opacity:1; }
+      90%  { top:90%; opacity:1; }
+      100% { top:94%; opacity:0; }
+    }
+    .scan-bar { display:flex; align-items:center; gap:8px; font-size:14px; }
+    .scan-bar .dot { flex:none; width:10px; height:10px; border-radius:50%; background:#dcdfe6; }
+    .scan-bar .dot.on { background:#67c23a; box-shadow:0 0 6px #67c23a; }
+    .scan-bar .dot.paused { background:#e6a23c; }
+    .scan-bar .dot.failed { background:#f56c6c; }
+    /* 商品行：紧凑，控件改为更窄的尺寸 */
+    .item-row { display:flex; align-items:flex-start; padding:12px 0; border-bottom:1px solid #f2f2f2; column-gap:8px; }
+    .item-row:last-child { border-bottom:0; }
+    .item-left { flex:1; min-width:0; /* 允许名称 ellipsis */ }
+    .item-name { font-size:14.5px; font-weight:600; color:#1f2d3d; line-height:1.3; word-break:break-all; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+    .item-code { font-size:11.5px; margin-top:2px; color:#909399; letter-spacing:.2px; }
+    .item-ops { display:flex; align-items:center; flex-wrap:wrap; gap:6px 8px; margin-top:8px; }
+    .item-ops .el-input-number { width:104px; }
+    .item-ops .price-input { width:86px; }
+    .item-del { align-self:flex-start; color:#f56c6c; flex:none; margin-top:2px; }
+    .empty-tip { text-align:center; padding: 22px 0 12px; color:#c0c4cc; font-size:13px; }
+    /* 底部固定结算条：加 safe-area-inset 以适配 iPhone 底部横条 */
+    .total-bar {
+      position:sticky; bottom:0; z-index:20;
+      background:#fff;
+      padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
+      box-shadow:0 -2px 10px rgba(0,0,0,.08);
+      display:flex; justify-content:space-between; align-items:center;
+      column-gap:14px;
+    }
+    .total-bar .info { min-width:0; line-height:1.35; }
+    .total-bar .info .qty { font-size:12px; color:#909399; }
+    .total-bar .info .price { font-size:20px; font-weight:700; color:#f56c6c; margin-top:2px; }
+    .big-btn { height:48px; min-width:140px; font-size:16px; border-radius:10px; }
+    /* 手动输入框高度增大易点 */
+    .manual-input .el-input__wrapper { padding:6px 12px !important; }
+    /* 弹窗：手机上占满 94%，label 宽度缩到 70，按钮居中 */
+    .el-dialog { --el-dialog-margin-top: 10vh !important; }
+  </style>
+</head>
+<body>
+<div id="app" v-cloak>
+  <div class="m-header" style="display:flex;justify-content:space-between;align-items:center;">
+    <span>📥 进货录入</span>
+    <span style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:400;color:#c0c4cc;">
+      👤 {{ userName }}
+      <el-button text size="small" style="color:#c0c4cc;" @click="logout">退出</el-button>
+    </span>
+  </div>
+  <!-- 实时扫码窗（常开） -->
+  <div class="m-card">
+    <div class="scan-bar">
+      <span class="dot" :class="camState"></span>
+      <b style="font-size:15px;">摄像头取码</b>
+      <span class="muted" style="flex:1;text-align:right;font-size:12px;">{{ camHint }}</span>
+      <el-button text size="small" type="primary" @click="toggleCam">
+        {{ camState === 'on' ? '暂停' : (camState === 'paused' ? '恢复' : '重试') }}
+      </el-button>
+    </div>
+    <div v-if="camExtraHint" style="margin-top:6px;padding:8px 10px;background:#fdf6ec;border:1px solid #faecd8;border-radius:8px;color:#b88230;font-size:12px;line-height:1.55;">
+      {{ camExtraHint }}
+    </div>
+    <div v-if="torchHint" style="margin-top:6px;padding:8px 10px;background:#fdf6ec;border:1px solid #faecd8;border-radius:8px;color:#b88230;font-size:12px;line-height:1.55;">
+      {{ torchHint }}
+    </div>
+    <div class="scan-area">
+      <div id="qr-reader"></div>
+      <div v-show="camState === 'on'" class="scan-overlay">
+        <span class="corner-tr"></span><span class="corner-bl"></span>
+        <div class="scan-line"></div>
+        <button v-show="torchSupported" class="torch-btn" :class="{ on: torchOn }" @click="toggleTorch" type="button">
+          {{ torchOn ? '🔦' : '💡' }}
+        </button>
+      </div>
+    </div>
+
+    <div class="m-label" style="margin-top:14px;">识别不到？手动输入条码</div>
+    <el-input v-model="manualCode" size="large" class="manual-input" placeholder="输入条码后回车" @keyup.enter="onManualScan"></el-input>
+  </div>
+
+  <!-- 供应商选择 -->
+  <div class="m-card">
+    <div class="m-label">供应商</div>
+    <el-select v-model="supplierId" placeholder="选择供应商" style="width:100%;" size="large">
+      <el-option v-for="s in suppliers" :key="s.id" :label="s.name" :value="s.id"></el-option>
+    </el-select>
+  </div>
+
+  <!-- 已扫描清单 -->
+  <div class="m-card">
+    <div class="m-label" style="display:flex;justify-content:space-between;align-items:center;">
+      <span>进货清单 <span class="muted" style="font-weight:400;font-size:12px;">{{ items.length }} 项</span></span>
+      <el-button v-if="items.length" text type="danger" size="small" @click="items = []">清空</el-button>
+    </div>
+    <div v-if="items.length === 0" class="empty-tip">📦 还没添加商品，对准条码扫一下吧</div>
+    <div v-for="(it, i) in items" :key="it.barcode + i" class="item-row">
+      <div class="item-left">
+        <div class="item-name">{{ it.name }}</div>
+        <div class="item-code">{{ it.barcode }}</div>
+        <div class="item-ops">
+          <el-input-number v-model="it.qty" :min="1" size="small" controls-position="right"></el-input-number>
+          <el-input v-model="it.costPrice" size="small" class="price-input" placeholder="进价">
+            <template #prepend>¥</template>
+          </el-input>
+        </div>
+      </div>
+      <el-button text type="danger" class="item-del" @click="items.splice(i,1)">删除</el-button>
+    </div>
+  </div>
+
+  <!-- 新建商品弹窗（扫码未命中时） -->
+  <el-dialog v-model="newDialog" title="新建商品" width="94%" top="10vh">
+    <div v-if="newLookupSource" style="margin-bottom:14px;padding:10px 12px;background:#ecf5ff;border:1px solid #d9ecff;border-radius:8px;color:#409eff;font-size:12.5px;line-height:1.6;">
+      <div style="font-weight:600;margin-bottom:2px;">✅ 网络命中 · {{ newLookupSource }}</div>
+      <div style="opacity:.88;">{{ newLookupHint }}</div>
+    </div>
+    <div v-else style="margin-bottom:14px;padding:10px 12px;background:#fef0f0;border:1px solid #fde2e2;border-radius:8px;color:#f56c6c;font-size:12.5px;line-height:1.6;">
+      ⚠️ {{ newLookupHint }}
+    </div>
+    <el-form :model="newForm" label-width="70px">
+      <el-form-item label="条码"><el-input v-model="newForm.barcode" disabled></el-input></el-form-item>
+      <el-form-item label="名称"><el-input v-model="newForm.name" placeholder="商品名称"></el-input></el-form-item>
+      <el-form-item label="分类"><el-input v-model="newForm.categoryName" placeholder="选填：饮料"></el-input></el-form-item>
+      <el-form-item label="进价"><el-input v-model.number="newForm.costPrice" type="number" placeholder="进货单价"></el-input></el-form-item>
+      <el-form-item label="售价"><el-input v-model.number="newForm.salePrice" type="number" placeholder="零售单价"></el-input></el-form-item>
+      <el-form-item label="单位"><el-input v-model="newForm.unit" placeholder="瓶/包/个"></el-input></el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="newDialog=false">取消</el-button>
+      <el-button type="primary" @click="confirmNew">保存并加入</el-button>
+    </template>
+  </el-dialog>
+
+  <div style="height:80px;"></div>
+  <div class="total-bar">
+    <div class="info">
+      <div class="qty">合计 {{ totalQty }} 件</div>
+      <div class="price">¥{{ totalAmount }}</div>
+    </div>
+    <el-button type="primary" class="big-btn" :loading="submitting" @click="submit">提交进货单</el-button>
+  </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/common.js"></script>
+<script>
+  const { createApp, ref, computed, onMounted } = Vue;
+
+  // 移动端统一 401 处理：清会话回手机登录页（业务与桌面端分离）
+  axios.interceptors.response.use(null, function (err) {
+    if (err.response && err.response.status === 401) {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      setTimeout(function () { location.href = '/mobile/login.html'; }, 500);
+      return Promise.reject(err);
+    }
+    return Promise.reject(err);
+  });
+
+  createApp({
+    setup() {
+      const token = localStorage.getItem('token');
+      // 未登录：跳手机登录页（不早退，保证模板绑定完整、无渲染报错）
+      if (!token) location.replace('/mobile/login.html');
+
+      const savedUser = JSON.parse(localStorage.getItem('user') || 'null');
+      const userName = ref(savedUser && savedUser.name ? savedUser.name : '未登录');
+
+      function logout() {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        location.href = '/mobile/login.html';
+      }
+
+      const supplierId = ref(null);
+      const suppliers = ref([]);
+      const items = ref([]);
+      const manualCode = ref('');
+      const submitting = ref(false);
+      const newDialog = ref(false);
+      const newLookupSource = ref('');  // 联网反查的来源（命中时显示）
+      const newLookupHint = ref('');    // 联网反查的提示文案
+      const newForm = ref({ barcode: '', name: '', categoryName: '', salePrice: '', costPrice: '', unit: '个' });
+      let html5Qr = null;
+
+      const totalQty = computed(() => items.value.reduce((s, i) => s + Number(i.qty || 0), 0));
+      const totalAmount = computed(() =>
+        items.value.reduce((s, i) => s + Number(i.qty || 0) * Number(i.costPrice || 0), 0).toFixed(2));
+
+      async function loadSuppliers() {
+        try {
+          const res = await axios.get('/api/v1/suppliers', {
+            params: { pageSize: 100 },
+            headers: { Authorization: 'Bearer ' + token }
+          });
+          if (res.data.code === 0) suppliers.value = res.data.data.list;
+        } catch (e) {}
+      }
+
+      async function handleBarcode(code) {
+        if (!code) return;
+        const authHeader = { headers: { Authorization: 'Bearer ' + token } };
+        try {
+          // 1. 先查本地商品库（by-barcode 命中 code=0+data非空 → 直接入清单）
+          let localHit = null;
+          try {
+            const res = await axios.get('/api/v1/products/by-barcode/' + encodeURIComponent(code), authHeader);
+            if (res.data && res.data.code === 0 && res.data.data) localHit = res.data.data;
+          } catch (e) { /* by-barcode 失败（401 之类）不影响，继续走联网查询 */ }
+
+          if (localHit) {
+            const p = localHit;
+            const exist = items.value.find(i => i.barcode === p.barcode);
+            if (exist) { exist.qty++; }
+            else items.value.push({ barcode: p.barcode, name: p.name, qty: 1, costPrice: p.costPrice, productId: p.id });
+            ElementPlus.ElMessage.success('已添加：' + p.name);
+            manualCode.value = '';
+            return;
+          }
+
+          // 2. 本地没有，尝试联网反查
+          newLookupSource.value = '';
+          newLookupHint.value = '';
+          let netInfo = null;
+          let lookupErr = '';
+          try {
+            ElementPlus.ElMessage.info({ message: '本地未找到，正在联网查商品信息…', duration: 1500 });
+            const lookup = await axios.get('/api/v1/barcode/lookup/' + encodeURIComponent(code), authHeader);
+            if (lookup.data && lookup.data.code === 0) netInfo = lookup.data.data;
+            else lookupErr = (lookup.data && lookup.data.message) || '查询失败';
+          } catch (e) {
+            lookupErr = (e && (e.message || (e.response && e.response.data && e.response.data.message))) || '网络错误';
+          }
+
+          // 3. 填充新建表单（联网命中 → 预填 + 蓝色来源提示；否则空壳 + 红色说明）
+          if (netInfo) {
+            // 品牌名是「A, B, C」多值逗号分隔时，取第一个品牌当主品牌；
+            // 若商品名首词已经等于任一品牌（大小写/空格不敏感），就不再重复叠加，避免出现 "Nutella, Ferrero, Yum yum Nutella" 这种奇怪叠加。
+            var displayName = (netInfo.name || '').trim();
+            var brandRaw = (netInfo.brand || '').trim();
+            if (brandRaw && displayName) {
+              var brandParts = brandRaw.split(/[,，、\/;；]/).map(function (s) { return s.trim(); }).filter(Boolean);
+              var mainBrand = brandParts[0];
+              // 拿 name 分词和任一品牌比（不区分大小写），如果 name 开头就是某个品牌则不重复拼
+              var nameHead = displayName.split(/[\s\-_,，\/]/).filter(Boolean)[0] || '';
+              var overlap = brandParts.some(function (b) {
+                return b && nameHead && b.toLowerCase() === nameHead.toLowerCase()
+                  || b && displayName.toLowerCase().indexOf(b.toLowerCase()) === 0;
+              });
+              if (!overlap && mainBrand) displayName = mainBrand + ' ' + displayName;
+            }
+            newForm.value = {
+              barcode: netInfo.barcode || code,
+              name: displayName || '',
+              categoryName: netInfo.category || '',
+              costPrice: netInfo.suggestedCostPrice != null && netInfo.suggestedCostPrice !== '' ? ('' + netInfo.suggestedCostPrice) : '',
+              salePrice: netInfo.suggestedSalePrice != null && netInfo.suggestedSalePrice !== '' ? ('' + netInfo.suggestedSalePrice) : '',
+              unit: netInfo.unit || '件'
+            };
+            var spec = netInfo.spec ? ' / 规格：' + netInfo.spec : '';
+            var srcMap = { 'OpenFoodFacts': '国际食品数据库', 'ApiZero': '国内商品条码库' };
+            newLookupSource.value = (srcMap[netInfo.source] || netInfo.source || '网络公开数据源') + spec;
+            newLookupHint.value = '商品信息来自网络，可能有误差，请核对后保存。';
+          } else {
+            newForm.value = { barcode: code, name: '', categoryName: '', salePrice: '', costPrice: '', unit: '件' };
+            newLookupSource.value = '';
+            if (lookupErr) newLookupHint.value = '未联网查到该商品（' + lookupErr + '），请手动填写。';
+            else newLookupHint.value = '未联网查到该商品，请手动填写。';
+          }
+          newDialog.value = true;
+        } catch (err) {
+          console.error('[handleBarcode] 未捕获异常:', err);
+          ElementPlus.ElMessage.error('处理条码失败：' + (err && err.message ? err.message : err));
+        }
+        manualCode.value = '';
+      }
+
+      function onManualScan() {
+        var code = manualCode.value.trim();
+        if (!code) return;
+        signalSoft();
+        handleBarcode(code);
+      }
+
+      // ---- 设备能力提示：iPhone 全系不支持网页震动，直接告诉用户，免得反复试 ----
+      const camExtraHint = ref('');
+      // 手电筒能力提示：iPhone/不支持 torch 的浏览器显示，让用户知道为啥没开灯按钮
+      const torchHint = ref('');
+      (function probeVib() {
+        try {
+          if (!navigator.vibrate) {
+            camExtraHint.value = '此设备浏览器未开放网页震动（iPhone Safari/Chrome 均不支持），只能听蜂鸣确认扫码';
+            return;
+          }
+          // 安卓：首次必须在用户手势里调用一次，否则后续也会被拒。等第一次任意 tap 再注册
+          var armed = false;
+          var prime = function () {
+            if (armed) return; armed = true;
+            try { navigator.vibrate(1); navigator.vibrate(0); } catch (e) {}
+            window.removeEventListener('touchstart', prime, true);
+            window.removeEventListener('keydown', prime, true);
+          };
+          window.addEventListener('touchstart', prime, { passive: true, capture: true });
+          window.addEventListener('keydown', prime, true);
+        } catch (e) {}
+      })();
+
+      async function confirmNew() {
+        const f = newForm.value;
+        if (!f.name) { ElementPlus.ElMessage.warning('请填写商品名称'); return; }
+        const cost = Number(f.costPrice) || 0;
+        const sale = Number(f.salePrice) || cost * 1.3 || 0;   // 售价未填自动按进价×1.3 估
+        try {
+          const res = await axios.post('/api/v1/products', {
+            barcode: f.barcode, name: f.name,
+            costPrice: cost, salePrice: sale,
+            unit: f.unit || '件', stockQuantity: 0, safetyStock: 0,
+            categoryName: f.categoryName || '未分类', status: '上架'
+          }, { headers: { Authorization: 'Bearer ' + token } });
+          if (res.data.code === 0) {
+            items.value.push({
+              barcode: f.barcode, name: f.name, qty: 1,
+              costPrice: cost, productId: res.data.data.id
+            });
+            newDialog.value = false;
+            ElementPlus.ElMessage.success('商品已创建并加入清单');
+          } else ElementPlus.ElMessage.error(res.data.message);
+        } catch (e) { ElementPlus.ElMessage.error('创建失败，请检查网络'); }
+      }
+
+      // ---- 顶部常开摄像头：启动后不停止，靠同码冷却防连击 ----
+      const camState = ref('off'); // on=运行中 paused=手动暂停 failed=不可用
+      const camHint = ref('正在启动摄像头…');
+      const torchSupported = ref(false); // 设备是否支持手电筒（torch）
+      const torchOn = ref(false);        // 当前手电筒开关状态
+      let lastCode = '', lastAt = 0;
+      // ---- 成功反馈：PDA 式双音蜂鸣 + 强震动 ----
+      let audioCtx = null;
+      function playBeep() {
+        try {
+          var Ctx = window.AudioContext || window.webkitAudioContext;
+          if (!Ctx) return;
+          if (!audioCtx) audioCtx = new Ctx();
+          if (audioCtx.state === 'suspended') audioCtx.resume();
+          var now = audioCtx.currentTime;
+
+          // 第一段：主蜂鸣（2.4kHz 方波 70ms）——PDA 核心「滴」
+          makeTone(audioCtx, now,    2400, 'square', 0.70, 0.070);
+          // 叠一层 4.8kHz 泛音（更尖锐，不发闷）
+          makeTone(audioCtx, now,    4800, 'square', 0.20, 0.060);
+
+          // 第二段：上扬收尾 2.8kHz 35ms，间隔 5ms —— 典型 PDA「滴↗」
+          var t2 = now + 0.075;
+          makeTone(audioCtx, t2,     2800, 'square', 0.62, 0.035);
+        } catch (e) { /* 设备不支持直接忽略 */ }
+      }
+      // makeTone 的单位：频率 Hz、durSec 秒（秒与 AudioContext.currentTime 保持一致）
+      function makeTone(ctx, startAt, freq, type, peakGain, durSec) {
+        var osc = ctx.createOscillator();
+        var gain = ctx.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, startAt);
+        gain.gain.setValueAtTime(0.0001, startAt);
+        gain.gain.exponentialRampToValueAtTime(peakGain, startAt + 0.004);   // 4ms attack：「啪」一下出来
+        gain.gain.setValueAtTime(peakGain, startAt + Math.max(0.005, durSec - 0.010));
+        gain.gain.exponentialRampToValueAtTime(0.0001, startAt + durSec);    // 尾段快速收住
+        osc.connect(gain).connect(ctx.destination);
+        osc.start(startAt);
+        osc.stop(startAt + durSec + 0.010);
+      }
+      const PATT_SOFT = 80;        // 手动输码：单段短震
+      const PATT_STRONG = [130, 35, 80];
+      // 扫码场景常不在用户手势里（摄像头回调），浏览器会吞 vibrate。
+      // 兜底方案：置位「待震」，下次任意用户触摸（点击/滑动）立即震一次，保证不会漏。
+      let pendingVibe = null;
+      function vibrateNow(pattern) {
+        try {
+          if (!navigator.vibrate) return false;
+          var ok = navigator.vibrate(pattern);
+          if (!ok && Array.isArray(pattern)) ok = navigator.vibrate(pattern.reduce((s,v)=>s+v,0));
+          return ok;
+        } catch (e) { return false; }
+      }
+      function vibrate() {
+        var ok = vibrateNow(PATT_STRONG);
+        if (!ok) pendingVibe = PATT_STRONG;
+      }
+      // 触摸兜底：摄像头扫码触发 pendingVibe 后，手指碰任何地方都立刻震
+      window.addEventListener('touchend', function () {
+        if (!pendingVibe) return;
+        var pat = pendingVibe; pendingVibe = null;
+        vibrateNow(pat);
+      }, { passive: true });
+      // 键盘/点击兜底（某些手机触屏识别为 click，加上保险）
+      window.addEventListener('click', function () {
+        if (!pendingVibe) return;
+        var pat = pendingVibe; pendingVibe = null;
+        vibrateNow(pat);
+      }, true);
+      // 扫码成功：PDA 蜂鸣 + 强震（货多时，视觉不看屏幕也知道扫到了）
+      function signalSuccess() { playBeep(); vibrate(); }
+      // 手动输码成功：只震不响（自己按的回车，不打扰）
+      // 注意：这里必须同步直接调 navigator.vibrate，保持在「回车按键」的可信手势链里
+      function signalSoft() {
+        try {
+          if (navigator.vibrate) {
+            var ok = navigator.vibrate(PATT_SOFT);
+            if (!ok) pendingVibe = PATT_SOFT;
+          } else { pendingVibe = PATT_SOFT; }
+        } catch (e) { pendingVibe = PATT_SOFT; }
+      }
+
+      function onDecoded(decoded) {
+        const code = String(decoded).trim();
+        if (!code) return;
+        const t = Date.now();
+        if (code === lastCode && t - lastAt < 1500) return; // 1.5 秒同码冷却
+        lastCode = code; lastAt = t;
+        signalSuccess();
+        handleBarcode(code); // 命中加入清单 / 未命中弹新建（扫码窗保持开启）
+      }
+
+      async function startCam() {
+        camState.value = 'off';
+        camHint.value = '正在启动摄像头…';
+        torchSupported.value = false;
+        torchOn.value = false;
+        torchHint.value = '';
+        if (!window.Html5Qrcode) { camState.value = 'failed'; camHint.value = '解码库未加载'; return; }
+        if (!window.isSecureContext) {
+          camState.value = 'failed';
+          camHint.value = '需 https 访问（见登录页证书指引）';
+          return;
+        }
+        try {
+          html5Qr = new Html5Qrcode('qr-reader');
+          // 保持原始约束不变（facingMode only），避免 advanced focusMode 在某些设备触发
+          // OverconstrainedError 导致 start 失败。自动对焦在 start 成功后通过 applyConstraints 增强。
+          enhanceTries = 0;  // 重置探测重试计数
+          await html5Qr.start(
+            { facingMode: 'environment' },
+            { fps: 12, qrbox: { width: 260, height: 150 } },
+            onDecoded,
+            function () {}
+          );
+          camState.value = 'on';
+          camHint.value = '对准条码，保持光线充足';
+          // start 成功后再尝试开启连续自动对焦 + 探测手电筒（失败静默忽略，不影响扫码）
+          enhanceCamera();
+        } catch (e) {
+          camState.value = 'failed';
+          var name = (e && e.name) || (e && e.message) || 'Error';
+          camHint.value = (typeof name === 'string' && name.indexOf('NotAllowed') >= 0)
+            ? '相机权限被拒绝，请到浏览器设置允许'
+            : (typeof name === 'string' && (name.indexOf('NotFound') >= 0 || name.indexOf('Overconstrain') >= 0 || name.indexOf('NotReadable') >= 0)
+               ? '未找到后置摄像头（台式机无摄像头，手机访问正常）'
+               : '启动失败，点右侧重试或手动输码');
+          console.error('摄像头启动失败：', e);
+        }
+      }
+
+      // start 成功后增强摄像头：开启连续自动对焦 + 探测手电筒能力。
+      // 两者都通过 track.applyConstraints 异步设置，失败静默忽略（设备不支持不影响基础扫码）。
+      // 注意：html5-qrcode start() 的 Promise resolve 时，video.srcObject 可能还未绑定，
+      // 需延迟重试探测，等流就绪后再取 track 能力。
+      var enhanceTries = 0;
+      function enhanceCamera() {
+        enhanceTries++;
+        try {
+          var video = document.querySelector('#qr-reader video');
+          if (!video) { if (enhanceTries < 8) setTimeout(enhanceCamera, 250); return; }
+          var ms = video.srcObject;
+          if (!ms) { if (enhanceTries < 8) setTimeout(enhanceCamera, 250); return; }
+          var vt = ms.getVideoTracks && ms.getVideoTracks()[0];
+          if (!vt) { if (enhanceTries < 8) setTimeout(enhanceCamera, 250); return; }
+
+          // 1. 开启连续自动对焦（解决部分安卓默认固定焦距致近距条码模糊）
+          if (typeof vt.getCapabilities === 'function') {
+            var caps = vt.getCapabilities();
+            if (caps) {
+              if (caps.focusMode && caps.focusMode.indexOf && caps.focusMode.indexOf('continuous') >= 0) {
+                vt.applyConstraints({ advanced: [{ focusMode: 'continuous' }] })
+                  .catch(function () { /* 设备不支持静默忽略 */ });
+              }
+              // 2. 探测手电筒能力：支持才显示开关按钮，不支持则提示用户
+              if ('torch' in caps && caps.torch === true) {
+                torchSupported.value = true;
+              } else {
+                // iPhone Safari/Chrome（WebKit）全系不支持网页手电筒，提示用户自行保证光线
+                torchHint.value = '此设备浏览器不支持网页手电筒（iPhone 均不支持），请确保光线充足';
+              }
+            } else {
+              torchHint.value = '此设备浏览器不支持网页手电筒（iPhone 均不支持），请确保光线充足';
+            }
+          } else {
+            // 无 getCapabilities API（iPhone WebKit 等），无法探测/控制 torch
+            torchHint.value = '此设备浏览器不支持网页手电筒（iPhone 均不支持），请确保光线充足';
+          }
+        } catch (e) { /* 静默忽略 */ }
+      }
+
+      // 切换手电筒开关
+      async function toggleTorch() {
+        if (!html5Qr) return;
+        try {
+          var video = document.querySelector('#qr-reader video');
+          var ms = video && video.srcObject;
+          var vt = ms && ms.getVideoTracks && ms.getVideoTracks()[0];
+          if (!vt) return;
+          var next = !torchOn.value;
+          await vt.applyConstraints({ advanced: [{ torch: next }] });
+          torchOn.value = next;
+        } catch (e) {
+          // 某些浏览器 applyConstraints 失败，给用户一个提示
+          ElementPlus.ElMessage.warning('此设备不支持手电筒控制');
+        }
+      }
+
+      async function stopCamRun() {
+        if (html5Qr) {
+          try { await html5Qr.stop(); html5Qr.clear(); } catch (e) {}
+          html5Qr = null;
+        }
+        torchSupported.value = false;
+        torchOn.value = false;
+      }
+
+      async function toggleCam() {
+        if (camState.value === 'on') {
+          await stopCamRun();
+          camState.value = 'paused'; camHint.value = '已暂停';
+        } else {
+          await startCam();
+        }
+      }
+
+      // 手机切后台浏览器可能杀掉视频流，回前台自动续启
+      document.addEventListener('visibilitychange', function () {
+        if (document.visibilityState === 'visible' && camState.value !== 'paused') {
+          stopCamRun().then(startCam);
+        }
+      });
+
+      async function submit() {
+        if (!supplierId.value) { ElementPlus.ElMessage.warning('请选择供应商'); return; }
+        if (!items.value.length) { ElementPlus.ElMessage.warning('请添加商品'); return; }
+        submitting.value = true;
+        try {
+          const res = await axios.post('/api/v1/purchases', {
+            supplierId: supplierId.value,
+            details: items.value.map(i => ({ productId: i.productId, barcode: i.barcode, name: i.name, qty: i.qty, costPrice: i.costPrice })),
+            totalQty: totalQty.value,
+            totalAmount: totalAmount.value
+          }, { headers: { Authorization: 'Bearer ' + token } });
+          if (res.data.code === 0) {
+            ElementPlus.ElMessage.success('进货单已提交：' + res.data.data.orderNo);
+            items.value = []; supplierId.value = null;
+          } else ElementPlus.ElMessage.error(res.data.message);
+        } catch (e) { ElementPlus.ElMessage.error('提交失败'); }
+        finally { submitting.value = false; }
+      }
+
+      onMounted(function () {
+        loadSuppliers();
+        startCam(); // 顶部摄像头窗口常开
+      });
+
+      return {
+        supplierId, suppliers, items, manualCode, submitting,
+        newDialog, newForm, newLookupSource, newLookupHint,
+        totalQty, totalAmount, userName, logout,
+        onManualScan, confirmNew, submit,
+        camState, camHint, camExtraHint, toggleCam,
+        torchSupported, torchOn, toggleTorch, torchHint
+      };
+    }
+  }).use(ElementPlus).mount('#app');
+</script>
+</body>
+</html>

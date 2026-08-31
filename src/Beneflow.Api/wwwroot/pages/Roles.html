@@ -1,0 +1,115 @@
+<div>
+  <div class="page-card">
+    <div class="toolbar">
+      <el-button type="success" @click="openCreate">+ 新增角色</el-button>
+    </div>
+    <div class="table-wrap">
+      <el-table :data="list" v-loading="loading" border size="small">
+        <el-table-column label="角色名称" prop="name" width="140" />
+        <el-table-column label="编码" prop="code" width="140" />
+        <el-table-column label="说明" prop="desc" min-width="200" />
+        <el-table-column label="用户数" prop="userCount" width="90" />
+        <el-table-column label="操作" width="150" fixed="right" align="center">
+          <template #default="{ row }">
+            <div class="op-btns">
+              <el-button text type="primary" title="编辑" @click="openEdit(row)"><el-icon><Edit /></el-icon></el-button>
+              <el-button text type="warning" title="权限分配" @click="openPerm(row)"><el-icon><Key /></el-icon></el-button>
+              <el-button text type="danger" title="删除" @click="remove(row)"><el-icon><Delete /></el-icon></el-button>
+            </div>
+          </template>
+        </el-table-column>
+      </el-table>
+    </div>
+  </div>
+
+  <el-dialog v-model="dialog" :title="form.id ? '编辑角色' : '新增角色'" width="460px">
+    <el-form :model="form" label-width="90px">
+      <el-form-item label="名称"><el-input v-model="form.name" /></el-form-item>
+      <el-form-item label="编码"><el-input v-model="form.code" :disabled="!!form.id" /></el-form-item>
+      <el-form-item label="说明"><el-input v-model="form.desc" type="textarea" :rows="2" /></el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="dialog=false">取消</el-button>
+      <el-button type="primary" @click="save">保存</el-button>
+    </template>
+  </el-dialog>
+
+  <el-dialog v-model="permDialog" title="权限分配" width="480px">
+    <el-tree
+      ref="treeRef" :data="permTree" show-checkbox node-key="id"
+      :props="{ label: 'name', children: 'children' }" />
+    <template #footer>
+      <el-button @click="permDialog=false">取消</el-button>
+      <el-button type="primary" @click="savePerm">保存</el-button>
+    </template>
+  </el-dialog>
+</div>
+
+<script page-setup>
+function pageSetup(deps) {
+  const { ref, onMounted } = Vue;
+  const { api, common, toast, confirm } = deps;
+  const list = ref([]); const loading = ref(false);
+  const dialog = ref(false); const form = ref({});
+  const permDialog = ref(false); const treeRef = ref(null);
+  const permTree = ref([]);
+  let permRole = null;   // 当前分配权限的角色
+
+  async function load() {
+    loading.value = true;
+    try { list.value = await api.get('/roles') || []; } catch(e){}
+    finally { loading.value = false; }
+  }
+  async function loadPermTree() {
+    try { permTree.value = await api.get('/menus') || []; } catch(e){}
+  }
+  function openCreate() { form.value = { name:'', code:'', desc:'' }; dialog.value = true; }
+  function openEdit(row) { form.value = Object.assign({}, row); dialog.value = true; }
+  async function save() {
+    const f = form.value;
+    if (!f.name || !f.name.trim()) { toast('请填写角色名称','warning'); return; }
+    if (f.id) {
+      await api.put('/roles/' + f.id, { name: f.name.trim(), desc: f.desc });
+      toast('保存成功','success');
+    } else {
+      if (!f.code || !f.code.trim()) { toast('请填写角色编码','warning'); return; }
+      await api.post('/roles', { name: f.name.trim(), code: f.code.trim(), desc: f.desc });
+      toast('新增成功','success');
+    }
+    dialog.value = false; load();
+  }
+  async function remove(row) {
+    if (row.userCount > 0) { toast('该角色已有用户关联，无法删除','warning'); return; }
+    try { await confirm('确认删除角色「'+row.name+'」？'); } catch(e){ return; }
+    await api.delete('/roles/' + row.id);
+    toast('已删除','success'); load();
+  }
+  async function openPerm(row) {
+    permRole = row;
+    permDialog.value = true;
+    // 等待对话框内 el-tree 挂载后再回显
+    Vue.nextTick(async () => {
+      try {
+        const menuIds = await api.get('/roles/' + row.id + '/menus') || [];
+        const leafIds = [];   // 仅勾选叶子节点，父节点由 el-tree 联动
+        (function walk(nodes) { (nodes||[]).forEach(n => {
+          if (!n.children || !n.children.length) { if (menuIds.indexOf(n.id) >= 0) leafIds.push(n.id); }
+          else walk(n.children);
+        }); })(permTree.value);
+        if (treeRef.value) treeRef.value.setCheckedKeys(leafIds);
+      } catch(e){}
+    });
+  }
+  async function savePerm() {
+    if (!permRole) return;
+    const leafIds = treeRef.value ? treeRef.value.getCheckedKeys(true) : [];   // 只取叶子，后端自动补目录
+    await api.put('/roles/' + permRole.id + '/permissions', { menuIds: leafIds });
+    toast('权限已保存','success');
+    permDialog.value = false;
+  }
+
+  onMounted(() => { load(); loadPermTree(); });
+  return { list, loading, dialog, form, permDialog, treeRef, permTree,
+    openCreate, openEdit, save, remove, openPerm, savePerm, common, toast };
+}
+</script>

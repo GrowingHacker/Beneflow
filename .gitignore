@@ -1,0 +1,28 @@
+## .NET
+bin/
+obj/
+*.user
+*.suo
+.vs/
+artifacts/
+
+## Logs & local data
+logs/
+*.log
+*.dbmdl
+*.bak
+backups/
+
+## Secrets & certs (never commit)
+appsettings.json
+*.pfx
+*.pem
+*.key
+
+## IDE
+.idea/
+*.swp
+
+## OS
+Thumbs.db
+.DS_Store

@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>百惠通 - 个体百货商店管理系统</title>
+  <link rel="stylesheet" href="/lib/element-plus/index.css" />
+  <link rel="stylesheet" href="/css/app.css?v=6" />
+  <script src="/lib/vue/vue.global.prod.js"></script>
+  <script src="/lib/element-plus/index.full.min.js"></script>
+  <script src="/lib/element-plus/locale/zh-cn.min.js"></script>
+  <script src="/lib/icons/index.iife.min.js"></script>
+  <script src="/lib/axios/axios.min.js"></script>
+  <script src="/lib/echarts/echarts.min.js"></script>
+  <script src="/lib/qrcode/qrcode.min.js"></script>
+</head>
+<body>
+<div id="app" v-cloak>
+  <el-container class="app-layout">
+    <!-- 侧边栏 -->
+    <el-aside width="210px" class="sidebar">
+      <div class="brand">
+        <span class="brand-name">百惠通</span>
+        <span class="brand-sub">个体商户版 V5.0</span>
+      </div>
+      <el-menu :default-active="String(page)" @select="onMenuSelect" :unique-opened="true">
+        <template v-for="m in menus" :key="m.index">
+          <!-- 二级菜单组：组内子项已按权限过滤 -->
+          <el-sub-menu v-if="m.children" :index="m.index">
+            <template #title>{{ m.label }}</template>
+            <el-menu-item v-for="c in m.children" :key="c.index" :index="c.index">{{ c.label }}</el-menu-item>
+          </el-sub-menu>
+          <!-- 一级页面项 -->
+          <el-menu-item v-else :index="m.index">{{ m.label }}</el-menu-item>
+        </template>
+      </el-menu>
+      <div class="sidebar-bottom">
+        <span>👤 {{ currentUser?.name || '' }}</span>
+        <el-button size="small" @click="logout">退出</el-button>
+      </div>
+    </el-aside>
+
+    <!-- 主体 -->
+    <el-main>
+      <div class="main-content">
+        <div class="topbar">
+          <span class="title">{{ pageTitle }}</span>
+          <el-dropdown trigger="click" @command="onUserCommand">
+            <span class="user-entry">
+              <el-icon class="user-avatar"><user-filled></user-filled></el-icon>
+              <span class="user-name">{{ currentUser?.name }}</span>
+              <span class="user-role">{{ currentUser?.role }}</span>
+              <el-icon class="user-arrow"><arrow-down></arrow-down></el-icon>
+            </span>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="password">修改密码</el-dropdown-item>
+                <el-dropdown-item command="logout" divided>退出登录</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </div>
+
+        <component :is="'page-' + page" v-if="ready"></component>
+        <div v-else class="loading">加载中...</div>
+      </div>
+    </el-main>
+  </el-container>
+
+  <!-- 修改密码弹窗 -->
+  <el-dialog v-model="pwdDialog" title="修改密码" width="380px">
+    <el-form :model="pwdForm" label-width="90px">
+      <el-form-item label="原密码">
+        <el-input v-model="pwdForm.oldPwd" type="password" show-password />
+      </el-form-item>
+      <el-form-item label="新密码">
+        <el-input v-model="pwdForm.newPwd" type="password" show-password placeholder="至少6位，含数字和字母" />
+      </el-form-item>
+      <el-form-item label="确认新密码">
+        <el-input v-model="pwdForm.confirmPwd" type="password" show-password />
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="pwdDialog=false">取消</el-button>
+      <el-button type="primary" :loading="pwdSubmitting" @click="submitPwd">确认</el-button>
+    </template>
+  </el-dialog>
+</div>
+
+<script src="/js/api.js?v=1"></script>
+<script src="/js/common.js?v=1"></script>
+<script src="/js/app.js?v=7"></script>
+</body>
+</html>

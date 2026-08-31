@@ -1,0 +1,54 @@
+<div>
+  <div class="page-card">
+    <div class="toolbar">
+      <el-input v-model="keyword" placeholder="商品 / 关联单号" clearable style="width:220px;" @keyup.enter="search" />
+      <el-button type="primary" @click="search">查询</el-button>
+      <el-button @click="exportCsv">导出</el-button>
+    </div>
+    <div class="table-wrap">
+      <el-table :data="list" v-loading="loading" border size="small">
+        <el-table-column label="时间" prop="createdAt" width="160" />
+        <el-table-column label="商品" prop="productName" min-width="160" />
+        <el-table-column label="类型" prop="changeType" width="110">
+          <template #default="{ row }"><el-tag :type="row.changeQty >= 0 ? 'success' : 'danger'" size="small">{{ row.changeType }}</el-tag></template>
+        </el-table-column>
+        <el-table-column label="变动数量" width="100"><template #default="{ row }"><span :class="row.changeQty >= 0 ? 'success-text' : 'danger-text'">{{ row.changeQty >= 0 ? '+' : '' }}{{ row.changeQty }}</span></template></el-table-column>
+        <el-table-column label="变动前" prop="beforeQty" width="90" />
+        <el-table-column label="变动后" prop="afterQty" width="90" />
+        <el-table-column label="关联单号" prop="refNo" width="160" />
+        <el-table-column label="操作人" prop="createdByName" width="100" />
+      </el-table>
+    </div>
+    <div class="pagination-wrap">
+      <el-pagination
+        v-model:current-page="page" v-model:page-size="pageSize" :total="total"
+        :page-sizes="[10,20,50]" layout="total, sizes, prev, pager, next" @size-change="load" @current-change="load" />
+    </div>
+  </div>
+</div>
+
+<script page-setup>
+function pageSetup(deps) {
+  const { ref, onMounted } = Vue;
+  const { api, common, toast } = deps;
+  const list = ref([]); const loading = ref(false);
+  const keyword = ref(''); const page = ref(1); const pageSize = ref(20); const total = ref(0);
+
+  async function load() {
+    loading.value = true;
+    try { const res = await api.get('/stock-logs', { params: { keyword: keyword.value, page: page.value, pageSize: pageSize.value } }); list.value = res.list||[]; total.value = res.total||0; } catch(e){}
+    finally { loading.value = false; }
+  }
+  function search() { page.value = 1; load(); }
+  function exportCsv() {
+    if (!list.value.length) { toast('无可导出数据','warning'); return; }
+    const header = ['时间','商品','类型','变动数量','变动前','变动后','关联单号','操作人'];
+    const lines = [header.join(',')];
+    list.value.forEach(r => lines.push([r.createdAt,r.productName,r.changeType,r.changeQty,r.beforeQty,r.afterQty,r.refNo,r.createdByName].map(v=>'"'+(v==null?'':v)+'"').join(',')));
+    common.downloadBlob(new Blob(['\ufeff'+lines.join('\n')], {type:'text/csv;charset=utf-8'}), '库存流水.csv');
+    toast('已导出','success');
+  }
+  onMounted(load);
+  return { list, loading, keyword, page, pageSize, total, load, search, exportCsv, common, toast };
+}
+</script>

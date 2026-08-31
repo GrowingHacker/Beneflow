@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#1f2d3d" />
+  <title>百惠通 - 进货端登录</title>
+  <link rel="stylesheet" href="/lib/element-plus/index.css" />
+  <link rel="stylesheet" href="/css/app.css" />
+  <script src="/lib/vue/vue.global.prod.js"></script>
+  <script src="/lib/element-plus/index.full.min.js"></script>
+  <script src="/lib/element-plus/locale/zh-cn.min.js"></script>
+  <script src="/lib/icons/index.iife.min.js"></script>
+  <script src="/lib/axios/axios.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin:0; padding:0; -webkit-tap-highlight-color:transparent; overflow-x:hidden; }
+    body {
+      min-height: 100vh; min-height: 100dvh;
+      background: linear-gradient(180deg, #1f2d3d 0%, #24344a 30%, #f0f2f5 36%, #f0f2f5 100%);
+      display:flex; flex-direction:column;
+      padding-top: env(safe-area-inset-top);
+      padding-bottom: env(safe-area-inset-bottom);
+    }
+    /* 深色区装饰光斑，避免大面积纯色单调 */
+    body::before, body::after { content:""; position:fixed; border-radius:50%; pointer-events:none; z-index:0; }
+    body::before { width:240px; height:240px; left:-80px; top:-60px;
+      background:radial-gradient(circle at 35% 35%, rgba(255,255,255,.09), transparent 65%); }
+    body::after { width:320px; height:320px; right:-110px; top:30px;
+      background:radial-gradient(circle at 60% 40%, rgba(96,165,250,.16), transparent 60%); }
+    #app { position:relative; z-index:1; display:flex; flex-direction:column; flex:1; }
+    .m-login-head { text-align:center; padding: 34px 20px 14px; color:#fff; }
+    .logo-badge {
+      width:64px; height:64px; margin:0 auto 12px; border-radius:18px;
+      background:linear-gradient(135deg,#4da1ff,#2f7fe6);
+      display:flex; align-items:center; justify-content:center;
+      font-size:30px; box-shadow:0 8px 20px rgba(47,127,230,.4), inset 0 1px 0 rgba(255,255,255,.28);
+    }
+    .m-login-head .logo {
+      font-size:28px; font-weight:800; letter-spacing:4px;
+      background: linear-gradient(135deg, #fff 20%, #a8d8ff 100%);
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+      display:inline-block;
+    }
+    .m-login-head .sub { margin-top:8px; font-size:13px; color:#c0c4cc; letter-spacing:1px; }
+    .m-login-wrap { flex:1; padding: 14px 16px 0; }
+    .m-card {
+      background:#fff; border-radius:16px; padding:22px 18px 24px;
+      box-shadow:0 8px 24px rgba(0,0,0,.10), 0 2px 6px rgba(0,0,0,.04);
+      animation: cardIn .35s ease-out;
+    }
+    @keyframes cardIn { from { opacity:0; transform: translateY(14px); } to { opacity:1; transform:none; } }
+    .card-title { font-size:19px; font-weight:700; color:#1f2d3d; }
+    .card-sub { font-size:12.5px; color:#909399; margin-top:6px; padding-bottom:14px; border-bottom:1px solid #f2f3f5; }
+    .field-label { font-size:13px; color:#606266; margin:16px 0 8px; font-weight:500; }
+    /* 输入框：浅灰填充 + 右侧图标，聚焦时白底蓝描边 */
+    .m-input .el-input__wrapper {
+      background:#f5f7fa; border-radius:12px; padding:3px 14px;
+      box-shadow:0 0 0 1.5px transparent inset;
+      transition: background .18s, box-shadow .18s;
+    }
+    .m-input .el-input__wrapper.is-focus {
+      background:#fff;
+      box-shadow:0 0 0 1.5px #409eff inset, 0 0 0 4px rgba(64,158,255,.12);
+    }
+    .m-input .f-icon { color:#a8abb2; font-size:17px; margin-right:2px; }
+    .pwd-eye { cursor:pointer; }
+    .m-input .el-input__wrapper.is-focus .f-icon { color:#409eff; }
+    .big-btn {
+      width:100%; height:50px; font-size:16.5px; margin-top:28px; letter-spacing:6px;
+      border-radius:12px; border-color:transparent;
+      background:linear-gradient(135deg,#4da1ff,#2f7fe6);
+      box-shadow:0 6px 16px rgba(47,127,230,.35);
+      transition: transform .12s, box-shadow .2s;
+    }
+    .big-btn:active { transform: scale(.98); box-shadow:0 3px 10px rgba(47,127,230,.3); }
+    .foot-tip { text-align:center; color:#909399; font-size:12px; line-height:1.7; padding: 20px 24px 18px; }
+    .cert-tip { background:#fdf6ec; border:1px solid #faecd8; color:#b88230;
+                border-radius:10px; padding:12px 14px; font-size:12.5px; line-height:1.75; margin-bottom:6px; }
+    .cert-tip a { color:#409eff; font-weight:600; }
+  </style>
+</head>
+<body>
+<div id="app" v-cloak>
+  <div class="m-login-head">
+    <div class="logo-badge">📥</div>
+    <div class="logo">百惠通</div>
+    <div class="sub">个体百货商店 · 移动进货端</div>
+  </div>
+
+  <div class="m-login-wrap">
+    <div class="m-card">
+      <div v-if="insecure" class="cert-tip">
+        📷 需要扫码功能？本页当前为非加密连接，摄像头被浏览器限制：<br/>
+        1. 点击 <a id="ca-link" href="/ca.crt">下载并安装服务器证书</a>（Android 设置→安全→更多→从存储安装；iPhone 安装后到 设置→通用→关于本机→证书信任设置 打开信任）<br/>
+        2. 之后改用 <b>https://服务器IP:5001</b> 访问本页即可实时扫码
+      </div>
+
+      <div class="card-title">账号登录</div>
+      <div class="card-sub">账号与电脑端通用 · 需店主或采购员权限</div>
+
+      <div class="field-label">账号</div>
+      <el-input ref="userInput" v-model="form.username" size="large" class="m-input"
+                placeholder="请输入用户名" @keyup.enter="$refs.pwd.focus()">
+        <template #prefix><el-icon class="f-icon"><User></User></el-icon></template>
+      </el-input>
+
+      <div class="field-label">密码</div>
+      <el-input ref="pwd" v-model="form.password" :type="showPwd ? 'text' : 'password'"
+                class="m-input" placeholder="请输入密码" @keyup.enter="submit">
+        <template #prefix><el-icon class="f-icon"><Lock></Lock></el-icon></template>
+        <template #suffix>
+          <el-icon class="f-icon pwd-eye" @click="showPwd = !showPwd">
+            <View v-if="showPwd"></View><Hide v-else></Hide>
+          </el-icon>
+        </template>
+      </el-input>
+
+      <el-button type="primary" class="big-btn" :loading="submitting" @click="submit">登 录</el-button>
+    </div>
+  </div>
+
+  <div class="foot-tip">
+    建议在电脑端首页扫描二维码访问本页，避免手输地址
+  </div>
+</div>
+
+<script>
+  const { createApp, reactive, ref, onMounted } = Vue;
+
+  const app = createApp({
+    setup() {
+      const form = reactive({ username: '', password: '' });
+      const submitting = ref(false);
+      // 非安全上下文（http 局域网访问）时提示安装证书以解锁摄像头
+      const insecure = ref(!window.isSecureContext);
+      const userInput = ref(null);
+      // 密码可见性（EP 的 show-password prop 在运行时编译模板下不生效，自行实现眼睛切换）
+      const showPwd = ref(false);
+
+      // 已登录则直接进入，避免重复登录（token 过期由接口 401 兜底）
+      if (localStorage.getItem('token')) location.replace('/mobile/purchase.html');
+
+      onMounted(function () {
+        // el-input 是组件，原生 autofocus 属性不生效，改用挂载后聚焦
+        if (userInput.value && userInput.value.focus) userInput.value.focus();
+      });
+
+      async function submit() {
+        if (!form.username) { ElementPlus.ElMessage.warning('请输入用户名'); return; }
+        if (!form.password) { ElementPlus.ElMessage.warning('请输入密码'); return; }
+        submitting.value = true;
+        try {
+          const res = await axios.post('/api/v1/auth/login', {
+            username: form.username.trim(), password: form.password
+          });
+          const body = res.data;
+          if (body.code === 0) {
+            // 存储约定与桌面端一致（token / user）
+            localStorage.setItem('token', body.data.token);
+            localStorage.setItem('user', JSON.stringify(body.data.user));
+            ElementPlus.ElMessage.success('登录成功');
+            setTimeout(function () { location.href = '/mobile/purchase.html'; }, 300);
+          } else {
+            ElementPlus.ElMessage.error(body.message || '登录失败');
+          }
+        } catch (e) {
+          const msg = e.response && e.response.data ? e.response.data.message : null;
+          ElementPlus.ElMessage.error(msg || '网络错误，请检查 WiFi 连接');
+        } finally {
+          submitting.value = false;
+        }
+      }
+
+      return { form, submitting, submit, insecure, userInput, showPwd };
+    }
+  });
+
+  // 全局注册 Element Plus 图标组件（User / Lock 等右侧输入框图标）
+  const icons = window.ElementPlusIconsVue || {};
+  Object.keys(icons).forEach(function (name) { app.component(name, icons[name]); });
+
+  app.use(ElementPlus).mount('#app');
+</script>
+</body>
+</html>

@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>百惠通 - 登录</title>
+  <link rel="stylesheet" href="/lib/element-plus/index.css" />
+  <link rel="stylesheet" href="/css/app.css" />
+  <script src="/lib/vue/vue.global.prod.js"></script>
+  <script src="/lib/element-plus/index.full.min.js"></script>
+  <script src="/lib/icons/index.iife.min.js"></script>
+  <script src="/lib/axios/axios.min.js"></script>
+</head>
+<body>
+<div id="app" v-cloak>
+  <div class="login-wrap">
+    <div class="login-box">
+      <div class="logo">
+        <div class="name">百惠通</div>
+        <div class="sub">个体百货商店商品管理系统</div>
+      </div>
+      <el-form :model="form" label-position="top" @submit.prevent="onLogin">
+        <el-form-item label="用户名">
+          <el-input v-model="form.username" placeholder="请输入用户名" autofocus @keyup.enter="onLogin" />
+        </el-form-item>
+        <el-form-item label="密码">
+          <el-input v-model="form.password" :type="showPwd ? 'text' : 'password'" placeholder="请输入密码" @keyup.enter="onLogin">
+            <template #suffix>
+              <el-icon style="cursor:pointer;color:#a8abb2;" @click="showPwd = !showPwd"><View v-if="showPwd"></View><Hide v-else></Hide></el-icon>
+            </template>
+          </el-input>
+        </el-form-item>
+        <el-button type="primary" style="width:100%;" :loading="loading" @click="onLogin">登 录</el-button>
+      </el-form>
+      <div class="login-tip">演示账号：admin（店主）/ cashier（收银员）/ buyer（采购员），密码均为 123456</div>
+      <div class="login-tip">不同角色登录后侧边栏仅显示有权限的菜单</div>
+    </div>
+  </div>
+</div>
+<script src="/js/api.js"></script>
+<script>
+  const { createApp, ref } = Vue;
+  const app = createApp({
+    setup() {
+      const form = ref({ username: '', password: '' });
+      const loading = ref(false);
+      // 密码可见性（EP 的 show-password prop 在运行时编译模板下不生效，自行实现眼睛切换）
+      const showPwd = ref(false);
+
+      async function onLogin() {
+        if (!form.value.username || !form.value.password) {
+          ElementPlus.ElMessage.warning('请输入用户名和密码'); return;
+        }
+        loading.value = true;
+        try {
+          const res = await axios.post('/api/v1/auth/login', form.value);
+          const body = res.data;
+          if (body.code === 0) {
+            localStorage.setItem('token', body.data.token);
+            localStorage.setItem('user', JSON.stringify(body.data.user));
+            ElementPlus.ElMessage.success('登录成功');
+            setTimeout(function () { window.location.href = '/index.html'; }, 300);
+          } else {
+            ElementPlus.ElMessage.error(body.message || '登录失败');
+          }
+        } catch (e) {
+          ElementPlus.ElMessage.error('登录请求失败：' + (e.message || ''));
+        } finally {
+          loading.value = false;
+        }
+      }
+
+      return { form: form, loading: loading, onLogin: onLogin, showPwd: showPwd };
+    }
+  });
+
+  // 全局注册 Element Plus 图标组件（View / Hide 密码眼睛）
+  const icons = window.ElementPlusIconsVue || {};
+  Object.keys(icons).forEach(function (name) { app.component(name, icons[name]); });
+
+  app.use(ElementPlus).mount('#app');
+</script>
+</body>
+</html>

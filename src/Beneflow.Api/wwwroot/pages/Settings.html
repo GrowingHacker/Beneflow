@@ -1,0 +1,277 @@
+<div>
+  <el-tabs v-model="tab">
+    <el-tab-pane label="店铺信息" name="shop">
+      <div class="page-card">
+        <el-form :model="form.shop" label-width="100px" style="max-width:520px;">
+          <el-form-item label="店铺名称"><el-input v-model="form.shop.name" /></el-form-item>
+          <el-form-item label="电话"><el-input v-model="form.shop.phone" /></el-form-item>
+          <el-form-item label="地址"><el-input v-model="form.shop.address" /></el-form-item>
+          <el-form-item label="Logo URL"><el-input v-model="form.shop.logo" /></el-form-item>
+          <el-form-item><el-button type="primary" @click="save">保存</el-button></el-form-item>
+        </el-form>
+      </div>
+    </el-tab-pane>
+
+    <el-tab-pane label="销售设置" name="sale">
+      <div class="page-card">
+        <el-form :model="form.sale" label-width="140px" style="max-width:520px;">
+          <el-form-item label="允许赊账"><el-switch v-model="form.sale.allowCredit" /></el-form-item>
+          <el-form-item label="默认收款方式">
+            <el-select v-model="form.sale.defaultPayMethod" style="width:200px;">
+              <el-option v-for="m in form.payMethods" :key="m" :label="m" :value="m" />
+            </el-select>
+          </el-form-item>
+          <el-form-item><el-button type="primary" @click="save">保存</el-button></el-form-item>
+        </el-form>
+      </div>
+    </el-tab-pane>
+
+    <el-tab-pane label="小票设置" name="receipt">
+      <div class="page-card">
+        <el-form :model="form.receipt" label-width="140px" style="max-width:520px;">
+          <el-form-item label="小票抬头"><el-input v-model="form.receipt.header" /></el-form-item>
+          <el-form-item label="小票据注"><el-input v-model="form.receipt.footer" type="textarea" :rows="2" /></el-form-item>
+          <el-form-item label="收银后自动打印"><el-switch v-model="form.receipt.autoPrint" /></el-form-item>
+          <el-form-item><el-button type="primary" @click="save">保存</el-button></el-form-item>
+        </el-form>
+      </div>
+    </el-tab-pane>
+
+    <el-tab-pane label="库存设置" name="stock">
+      <div class="page-card">
+        <el-form :model="form.stock" label-width="160px" style="max-width:520px;">
+          <el-form-item label="预警阈值（倍）"><el-input-number v-model="form.stock.warningThreshold" :min="1" :max="5" controls-position="right" /></el-form-item>
+          <el-form-item label="临期提醒天数"><el-input-number v-model="form.stock.expiryDays" :min="1" :max="365" controls-position="right" /></el-form-item>
+          <el-form-item><el-button type="primary" @click="save">保存</el-button></el-form-item>
+        </el-form>
+      </div>
+    </el-tab-pane>
+
+    <el-tab-pane label="数据字典" name="dict">
+      <div class="page-card">
+        <div class="dict-head">
+          <div>
+            <div class="dict-title">数据字典</div>
+            <div class="dict-tip">全局字典供所有分类使用；为分类配置专属字典后，商品弹窗中该分类的单位/规格下拉将只显示专属选项。修改后请点击右上角「保存字典」。</div>
+          </div>
+          <div class="grow"></div>
+          <el-button type="primary" @click="save">保存字典</el-button>
+        </div>
+        <el-divider style="margin:14px 0 16px;"></el-divider>
+
+        <el-row :gutter="20">
+          <el-col :span="8">
+            <div class="dict-label">商品单位（{{ form.units.length }}）</div>
+            <div class="dict-box">
+              <template v-if="form.units.length">
+                <el-tag v-for="u in form.units" :key="u" closable @close="form.units.splice(form.units.indexOf(u),1)">{{ u }}</el-tag>
+              </template>
+              <div v-else class="muted" style="font-size:12px;margin-bottom:6px;">暂无单位，请在下方添加</div>
+              <div class="dict-add">
+                <el-input v-model="newUnit" size="small" placeholder="输入单位，回车添加" @keyup.enter="addUnit"></el-input>
+                <el-button size="small" @click="addUnit">添加</el-button>
+              </div>
+            </div>
+          </el-col>
+          <el-col :span="8">
+            <div class="dict-label">商品规格（{{ form.specs.length }}）</div>
+            <div class="dict-box">
+              <template v-if="form.specs.length">
+                <el-tag v-for="s in form.specs" :key="s" closable @close="form.specs.splice(form.specs.indexOf(s),1)">{{ s }}</el-tag>
+              </template>
+              <div v-else class="muted" style="font-size:12px;margin-bottom:6px;">暂无规格，请在下方添加</div>
+              <div class="dict-add">
+                <el-input v-model="newSpec" size="small" placeholder="输入规格，回车添加" @keyup.enter="addSpec"></el-input>
+                <el-button size="small" @click="addSpec">添加</el-button>
+              </div>
+            </div>
+          </el-col>
+          <el-col :span="8">
+            <div class="dict-label">收款方式（{{ form.payMethods.length }}）</div>
+            <div class="dict-box">
+              <template v-if="form.payMethods.length">
+                <el-tag v-for="m in form.payMethods" :key="m" closable @close="form.payMethods.splice(form.payMethods.indexOf(m),1)">{{ m }}</el-tag>
+              </template>
+              <div v-else class="muted" style="font-size:12px;margin-bottom:6px;">暂无收款方式，请在下方添加</div>
+              <div class="dict-add">
+                <el-input v-model="newPayMethod" size="small" placeholder="输入收款方式，回车添加" @keyup.enter="addPayMethod"></el-input>
+                <el-button size="small" @click="addPayMethod">添加</el-button>
+              </div>
+            </div>
+          </el-col>
+        </el-row>
+
+        <el-divider style="margin:16px 0;"></el-divider>
+
+        <div class="dict-head">
+          <div>
+            <div class="dict-title">分类专属字典</div>
+            <div class="dict-tip">下拉中标注「已配置」的分类将只使用其专属选项；未配置的分类使用上方全局字典。</div>
+          </div>
+        </div>
+        <el-select v-model="selCat" placeholder="选择分类进行配置" filterable clearable style="width:240px;margin-top:10px;" @change="onSelCat">
+          <el-option v-for="c in cats" :key="c.id" :label="c.name" :value="c.name">
+            <span style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+              <span>{{ c.name }}</span>
+              <span v-if="hasCatCfg(c.name)" style="color:#67c23a;font-size:12px;">已配置</span>
+            </span>
+          </el-option>
+        </el-select>
+
+        <template v-if="selCat">
+          <el-row :gutter="20" style="margin-top:14px;">
+            <el-col :span="12">
+              <div class="dict-label">「{{ selCat }}」的单位（{{ catUnits.length }}）</div>
+              <div class="dict-box">
+                <template v-if="catUnits.length">
+                  <el-tag v-for="u in catUnits" :key="u" closable @close="catUnits.splice(catUnits.indexOf(u),1)">{{ u }}</el-tag>
+                </template>
+                <div v-else class="muted" style="font-size:12px;margin-bottom:6px;">暂无，添加后该分类商品仅可选择以下单位</div>
+                <div class="dict-add">
+                  <el-input v-model="newCatUnit" size="small" placeholder="输入单位，回车添加" @keyup.enter="addCatUnit"></el-input>
+                  <el-button size="small" @click="addCatUnit">添加</el-button>
+                </div>
+              </div>
+            </el-col>
+            <el-col :span="12">
+              <div class="dict-label">「{{ selCat }}」的规格（{{ catSpecs.length }}）</div>
+              <div class="dict-box">
+                <template v-if="catSpecs.length">
+                  <el-tag v-for="s in catSpecs" :key="s" closable @close="catSpecs.splice(catSpecs.indexOf(s),1)">{{ s }}</el-tag>
+                </template>
+                <div v-else class="muted" style="font-size:12px;margin-bottom:6px;">暂无，添加后该分类商品仅可选择以下规格</div>
+                <div class="dict-add">
+                  <el-input v-model="newCatSpec" size="small" placeholder="输入规格，回车添加" @keyup.enter="addCatSpec"></el-input>
+                  <el-button size="small" @click="addCatSpec">添加</el-button>
+                </div>
+              </div>
+            </el-col>
+          </el-row>
+          <el-button size="small" type="danger" plain @click="removeCatCfg" style="margin-top:12px;">删除「{{ selCat }}」的专属配置，恢复使用全局字典</el-button>
+        </template>
+      </div>
+    </el-tab-pane>
+
+    <el-tab-pane label="条码查询" name="barcode">
+      <div class="page-card">
+        <el-alert title="本地商品库无此条码时，系统自动联网反查商品名称/分类/规格/单价。在此维护外部数据源的 API Key。" type="info" :closable="false" style="margin-bottom:14px;" />
+        <el-form :model="form.barcode" label-width="170px" style="max-width:640px;">
+          <el-form-item label="ApiZero API Key">
+            <el-input v-model="form.barcode.apiZeroKey" show-password placeholder="留空则匿名调用" />
+            <div class="muted" style="font-size:12px;line-height:1.6;margin-top:4px;">国内商品条码库（apizero.cn，注册即用免审核）。留空=匿名 20次/天；填 Key=200次/天 QPS=2。<br/>已保存的 Key 显示为 *** 后4位掩码，保留掩码不修改即维持原值；如需更换请清空后输入新 Key。</div>
+          </el-form-item>
+          <el-form-item>
+            <el-button type="primary" @click="save">保存</el-button>
+            <span class="muted" style="margin-left:10px;">保存后约 30 秒生效（服务端 Key 缓存刷新）</span>
+          </el-form-item>
+        </el-form>
+      </div>
+    </el-tab-pane>
+
+    <el-tab-pane label="备份与恢复" name="backup">
+      <div class="page-card">
+        <el-alert title="每日凌晨 2:00 自动全量备份，保留 30 天（存于本机 d:\Beneflow\backups，可在 appsettings.json 配置；若当天未开机，开机启动时自动补备）" type="info" :closable="false" style="margin-bottom:14px;" />
+        <el-button type="primary" :loading="restoring" @click="backup">立即备份下载</el-button>
+        <el-upload :show-file-list="false" accept=".bak" :before-upload="restore" style="display:inline-block;margin-left:10px;">
+          <el-button :loading="restoring">恢复备份</el-button>
+        </el-upload>
+        <div class="muted" style="margin-top:12px;line-height:1.6;">恢复将<b style="color:#e6a23c;">覆盖当前全部数据</b>，且恢复期间服务短暂不可用；恢复完成后需重新登录。</div>
+      </div>
+    </el-tab-pane>
+  </el-tabs>
+</div>
+
+<script page-setup>
+function pageSetup(deps) {
+  const { ref, onMounted } = Vue;
+  const { api, common, toast, confirm } = deps;
+  const tab = ref('shop');
+  const form = ref({
+    shop: { name:'', phone:'', address:'', logo:'' },
+    sale: { allowCredit: true, defaultPayMethod: '现金' },
+    receipt: { header:'', footer:'', autoPrint: false },
+    stock: { warningThreshold: 1, expiryDays: 30 },
+    units: [], specs: [], payMethods: [], categoryDict: {},
+    barcode: { apiZeroKey:'' }
+  });
+  const newUnit = ref('');
+  const newSpec = ref('');
+
+  const cats = ref([]);
+  const selCat = ref('');
+  const catUnits = ref([]);
+  const catSpecs = ref([]);
+  const newCatUnit = ref('');
+  const newCatSpec = ref('');
+
+  async function loadCats() {
+    try { cats.value = (await api.get('/categories')) || []; } catch(e){}
+  }
+  function onSelCat(name) {
+    const cfg = name ? ((form.value.categoryDict || {})[name]) : null;
+    catUnits.value = (cfg && cfg.units) ? cfg.units.slice() : [];
+    catSpecs.value = (cfg && cfg.specs) ? cfg.specs.slice() : [];
+    newCatUnit.value = ''; newCatSpec.value = '';
+  }
+  function addCatUnit() { if (newCatUnit.value && catUnits.value.indexOf(newCatUnit.value) < 0) catUnits.value.push(newCatUnit.value); newCatUnit.value = ''; }
+  function addCatSpec() { if (newCatSpec.value && catSpecs.value.indexOf(newCatSpec.value) < 0) catSpecs.value.push(newCatSpec.value); newCatSpec.value = ''; }
+  function hasCatCfg(name) { return !!(name && form.value.categoryDict && form.value.categoryDict[name]); }
+  async function removeCatCfg() {
+    if (!selCat.value) return;
+    try { await confirm('确认删除「' + selCat.value + '」的专属配置？删除后该分类恢复使用全局字典。'); } catch (e) { return; }
+    const d = form.value.categoryDict || {};
+    delete d[selCat.value];
+    form.value.categoryDict = d;
+    toast('已删除，点击「保存字典」后生效', 'success');
+    selCat.value = ''; onSelCat('');
+  }
+
+  async function load() {
+    try { form.value = await api.get('/settings'); } catch(e){}
+  }
+  async function save() {
+    // 把当前分类的专属编辑合并回 categoryDict 再整体保存
+    if (selCat.value && (catUnits.value.length || catSpecs.value.length)) {
+      const d = form.value.categoryDict || {};
+      d[selCat.value] = { units: catUnits.value.slice(), specs: catSpecs.value.slice() };
+      form.value.categoryDict = d;
+    }
+    try { await api.put('/settings', form.value); toast('保存成功','success'); } catch(e){}
+  }
+  function addUnit() { if (newUnit.value && form.value.units.indexOf(newUnit.value) < 0) form.value.units.push(newUnit.value); newUnit.value = ''; }
+  function addSpec() { if (newSpec.value && (form.value.specs || []).indexOf(newSpec.value) < 0) form.value.specs.push(newSpec.value); newSpec.value = ''; }
+  const newPayMethod = ref('');
+  function addPayMethod() {
+    if (newPayMethod.value && (form.value.payMethods || []).indexOf(newPayMethod.value) < 0) form.value.payMethods.push(newPayMethod.value);
+    newPayMethod.value = '';
+  }
+  const restoring = ref(false);
+  async function backup() {
+    restoring.value = true;
+    try {
+      const blob = await api.post('/settings/backup', null, { responseType: 'blob' });
+      common.downloadBlob(blob, '百惠通备份_' + common.formatDate(new Date()).replace(/[-: ]/g, '') + '.bak');
+      toast('备份成功，已开始下载','success');
+    } catch(e){}
+    finally { restoring.value = false; }
+  }
+  async function restore(file) {
+    try { await confirm('恢复备份将【覆盖当前全部数据】，且恢复期间服务短暂不可用。确定继续吗？'); } catch(e){ return false; }
+    restoring.value = true;
+    const fd = new FormData(); fd.append('file', file);
+    try {
+      await api.post('/settings/restore', fd);
+      toast('恢复成功，即将跳转登录页','success');
+      setTimeout(() => { localStorage.removeItem('token'); localStorage.removeItem('user'); location.href = '/login.html'; }, 1500);
+    } catch(e){}
+    finally { restoring.value = false; }
+    return false;
+  }
+
+  onMounted(function () { load(); loadCats(); });
+  return { tab, form, newUnit, newSpec, save, addUnit, addSpec, newPayMethod, addPayMethod,
+    cats, selCat, catUnits, catSpecs, newCatUnit, newCatSpec,
+    onSelCat, addCatUnit, addCatSpec, removeCatCfg, hasCatCfg,
+    backup, restore, restoring, toast };
+}
+</script>

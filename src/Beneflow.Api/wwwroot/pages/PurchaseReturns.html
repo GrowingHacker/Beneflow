@@ -1,0 +1,65 @@
+<div>
+  <div class="page-card">
+    <div class="toolbar">
+      <span>供应商：</span>
+      <el-select v-model="supplierId" placeholder="选择供应商" filterable style="width:200px;" @change="loadOrders">
+        <el-option v-for="s in suppliers" :key="s.id" :label="s.name" :value="s.id" />
+      </el-select>
+      <span style="margin-left:10px;">进货单：</span>
+      <el-select v-model="orderId" placeholder="选择进货单" style="width:200px;" @change="loadDetail">
+        <el-option v-for="o in orders" :key="o.id" :label="o.orderNo" :value="o.id" />
+      </el-select>
+    </div>
+    <div v-if="!orderId" class="empty-tip">请选择供应商与进货单</div>
+    <div v-else>
+      <div class="table-wrap">
+        <el-table :data="items" border size="small">
+          <el-table-column label="商品" prop="name" min-width="160" />
+          <el-table-column label="进价" width="100"><template #default="{ row }">{{ common.money(row.costPrice) }}</template></el-table-column>
+          <el-table-column label="进货数量" prop="qty" width="100" />
+          <el-table-column label="退货数量" width="160"><template #default="{ row }"><el-input-number v-model="row.returnQty" :min="0" :max="row.qty" size="small" controls-position="right" /></template></el-table-column>
+          <el-table-column label="退货金额" width="120"><template #default="{ row }">{{ common.money((row.returnQty||0)*row.costPrice) }}</template></el-table-column>
+        </el-table>
+      </div>
+      <div style="margin-top:14px;text-align:right;">
+        退货合计 <b class="cart-total">{{ common.money(returnTotal) }}</b>
+        <el-button type="primary" :loading="submitting" style="margin-left:14px;" @click="submit">提交退货</el-button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script page-setup>
+function pageSetup(deps) {
+  const { ref, computed, onMounted } = Vue;
+  const { api, common, toast, confirm } = deps;
+  const suppliers = ref([]); const orders = ref([]);
+  const supplierId = ref(null); const orderId = ref(null);
+  const items = ref([]); const submitting = ref(false);
+  const returnTotal = computed(() => items.value.reduce((s,i)=>s+Number(i.returnQty||0)*Number(i.costPrice||0),0));
+
+  async function loadSuppliers() { try { const r = await api.get('/suppliers', { params: { pageSize: 200 } }); suppliers.value = r.list||[]; } catch(e){} }
+  async function loadOrders() {
+    orderId.value = null; items.value = [];
+    try { const r = await api.get('/purchases', { params: { pageSize: 200 } }); orders.value = (r.list||[]).filter(o => o.supplierId === supplierId.value); } catch(e){}
+  }
+  async function loadDetail() {
+    items.value = [];
+    if (!orderId.value) return;
+    try {
+      const res = await api.get('/purchases/' + orderId.value);
+      items.value = (res.items || []).map(i => Object.assign({}, i, { returnQty: 0 }));
+    } catch(e){ orderId.value = null; }
+  }
+  async function submit() {
+    const sel = items.value.filter(i => i.returnQty > 0);
+    if (!sel.length) { toast('请填写退货数量','warning'); return; }
+    try { await confirm('确认提交采购退货？'); } catch(e){ return; }
+    submitting.value = true;
+    try { const res = await api.post('/purchase-returns', { supplierId: supplierId.value, items: sel.map(i => ({ productId: i.productId, qty: i.returnQty, costPrice: i.costPrice })), returnTotal: returnTotal.value }); toast('退货成功：' + res.orderNo, 'success'); orderId.value = null; items.value = []; } catch(e){}
+    finally { submitting.value = false; }
+  }
+  onMounted(loadSuppliers);
+  return { suppliers, orders, supplierId, orderId, items, submitting, returnTotal, loadOrders, loadDetail, submit, common, toast };
+}
+</script>

@@ -1,0 +1,114 @@
+<div>
+  <div class="page-card">
+    <div class="toolbar">
+      <el-input v-model="keyword" placeholder="用户名 / 姓名" clearable style="width:200px;" @keyup.enter="search" />
+      <el-button type="primary" @click="search">查询</el-button>
+      <div class="grow"></div>
+      <el-button type="success" @click="openCreate">+ 新增用户</el-button>
+    </div>
+    <div class="table-wrap">
+      <el-table :data="list" v-loading="loading" border size="small">
+        <el-table-column label="用户名" prop="username" width="120" />
+        <el-table-column label="姓名" prop="name" width="120" />
+        <el-table-column label="手机号" prop="phone" width="140" />
+        <el-table-column label="角色" prop="role" width="120" />
+        <el-table-column label="状态" width="90"><template #default="{ row }"><el-tag :type="row.status === '启用' ? 'success' : 'info'" size="small">{{ row.status }}</el-tag></template></el-table-column>
+        <el-table-column label="创建时间" prop="createdAt" width="140" />
+        <el-table-column label="操作" width="150" fixed="right" align="center">
+          <template #default="{ row }">
+            <div class="op-btns">
+              <el-button text type="primary" title="编辑" @click="openEdit(row)"><el-icon><Edit /></el-icon></el-button>
+              <el-button text type="warning" title="重置密码" @click="resetPwd(row)"><el-icon><Key /></el-icon></el-button>
+              <el-button text :type="row.status === '启用' ? 'danger' : 'success'" :title="row.status === '启用' ? '禁用' : '启用'" @click="toggleStatus(row)">
+                <el-icon><component :is="row.status === '启用' ? 'TurnOff' : 'Open'" /></el-icon>
+              </el-button>
+            </div>
+          </template>
+        </el-table-column>
+      </el-table>
+    </div>
+    <div class="pagination-wrap">
+      <el-pagination
+        v-model:current-page="page" v-model:page-size="pageSize" :total="total"
+        layout="total, prev, pager, next" @current-change="load" />
+    </div>
+  </div>
+
+  <el-dialog v-model="dialog" :title="form.id ? '编辑用户' : '新增用户'" width="480px">
+    <el-form :model="form" label-width="90px">
+      <el-form-item label="用户名"><el-input v-model="form.username" :disabled="!!form.id" placeholder="4-20位字母或数字" /></el-form-item>
+      <el-form-item label="姓名"><el-input v-model="form.name" /></el-form-item>
+      <el-form-item label="手机号"><el-input v-model="form.phone" /></el-form-item>
+      <el-form-item v-if="!form.id" label="初始密码"><el-input v-model="form.password" type="password" show-password placeholder="至少6位，含数字和字母" /></el-form-item>
+      <el-form-item label="角色">
+        <el-select v-model="form.roleId" placeholder="选择角色" style="width:100%;">
+          <el-option v-for="r in roles" :key="r.id" :label="r.name" :value="r.id"></el-option>
+        </el-select>
+      </el-form-item>
+      <el-form-item label="备注"><el-input v-model="form.remark" type="textarea" :rows="2" /></el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="dialog=false">取消</el-button>
+      <el-button type="primary" @click="save">保存</el-button>
+    </template>
+  </el-dialog>
+</div>
+
+<script page-setup>
+function pageSetup(deps) {
+  const { ref, onMounted } = Vue;
+  const { api, common, toast, confirm } = deps;
+  const list = ref([]); const loading = ref(false);
+  const keyword = ref(''); const page = ref(1); const pageSize = ref(20); const total = ref(0);
+  const dialog = ref(false); const form = ref({});
+  const roles = ref([]);
+
+  function emptyForm() { return { username:'', name:'', phone:'', password:'', roleId:null, remark:'' }; }
+
+  async function load() {
+    loading.value = true;
+    try { const res = await api.get('/users', { params: { keyword: keyword.value, page: page.value, pageSize: pageSize.value } }); list.value = res.list||[]; total.value = res.total||0; } catch(e){}
+    finally { loading.value = false; }
+  }
+  async function loadRoles() {
+    try { roles.value = await api.get('/roles') || []; } catch(e){}
+  }
+  function search() { page.value = 1; load(); }
+  function openCreate() { form.value = emptyForm(); dialog.value = true; }
+  function openEdit(row) {
+    const role = roles.value.find(r => r.code === row.roleCode);
+    form.value = Object.assign({}, row, { roleId: role ? role.id : null });
+    dialog.value = true;
+  }
+  async function save() {
+    const f = form.value;
+    if (!f.id) {
+      if (!/^[a-zA-Z0-9]{4,20}$/.test(f.username)) { toast('用户名为4-20位字母或数字','warning'); return; }
+      if (!/(?=.*[0-9])(?=.*[a-zA-Z]).{6,}/.test(f.password||'')) { toast('密码至少6位且含数字和字母','warning'); return; }
+    }
+    if (!f.roleId) { toast('请选择角色','warning'); return; }
+    if (f.id) {
+      await api.put('/users/' + f.id, { name: (f.name||'').trim(), phone: f.phone, roleId: f.roleId, remark: f.remark });
+      toast('保存成功','success');
+    } else {
+      await api.post('/users', { username: f.username, password: f.password, name: (f.name||'').trim(), phone: f.phone, roleId: f.roleId, remark: f.remark });
+      toast('新增成功','success');
+    }
+    dialog.value = false; load();
+  }
+  async function resetPwd(row) {
+    try { await confirm('确认重置「'+row.username+'」的密码为默认值 123456？'); } catch(e){ return; }
+    await api.put('/users/' + row.id, { name: row.name, password: '123456' });
+    toast('已重置密码为 123456','success');
+  }
+  async function toggleStatus(row) {
+    const next = row.status === '启用' ? '禁用' : '启用';
+    try { await api.put('/users/' + row.id + '/status', { status: next }); row.status = next; toast('已' + next, 'success'); }
+    catch (e) {}
+  }
+
+  onMounted(() => { load(); loadRoles(); });
+  return { list, loading, keyword, page, pageSize, total, dialog, form, roles,
+    load, search, openCreate, openEdit, save, resetPwd, toggleStatus, common, toast };
+}
+</script>

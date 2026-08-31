@@ -1,0 +1,127 @@
+<div>
+  <div class="page-card">
+    <div class="toolbar">
+      <el-input v-model="keyword" placeholder="供应商名称 / 联系人" clearable style="width:220px;" @keyup.enter="search" />
+      <el-button type="primary" @click="search">查询</el-button>
+      <el-button @click="reset">重置</el-button>
+      <div class="grow"></div>
+      <el-button type="success" @click="openCreate">+ 新增供应商</el-button>
+    </div>
+
+    <div class="table-wrap">
+      <el-table :data="list" v-loading="loading" border stripe size="small">
+        <el-table-column label="名称" prop="name" min-width="160" />
+        <el-table-column label="联系人" prop="contact" width="100" />
+        <el-table-column label="手机号" prop="phone" width="130" />
+        <el-table-column label="累计采购" width="120">
+          <template #default="{ row }">{{ common.money(row.totalAmount) }}</template>
+        </el-table-column>
+        <el-table-column label="最近供货" prop="lastDate" width="120" />
+        <el-table-column label="备注" prop="remark" min-width="120" show-overflow-tooltip>
+          <template #default="{ row }"><span v-if="!row.remark" class="muted">—</span>{{ row.remark }}</template>
+        </el-table-column>
+        <el-table-column label="状态" width="80">
+          <template #default="{ row }">
+            <el-tag :type="row.status === '启用' ? 'success' : 'info'" size="small">{{ row.status }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="190" fixed="right" align="center">
+          <template #default="{ row }">
+            <div class="op-btns">
+              <el-button text type="primary" title="编辑" @click="openEdit(row)"><el-icon><Edit /></el-icon></el-button>
+              <el-button text :type="row.status === '启用' ? 'warning' : 'success'" :title="row.status === '启用' ? '停用' : '启用'" @click="toggleStatus(row)">
+                <el-icon><component :is="row.status === '启用' ? 'TurnOff' : 'Open'" /></el-icon>
+              </el-button>
+              <el-button text type="info" title="进货记录" @click="viewPurchases(row)"><el-icon><List /></el-icon></el-button>
+              <el-button text type="danger" title="删除" @click="remove(row)"><el-icon><Delete /></el-icon></el-button>
+            </div>
+          </template>
+        </el-table-column>
+      </el-table>
+    </div>
+
+    <div class="pagination-wrap">
+      <el-pagination
+        v-model:current-page="page" v-model:page-size="pageSize"
+        :total="total" :page-sizes="[10,20,50]" layout="total, sizes, prev, pager, next"
+        @size-change="load" @current-change="load" />
+    </div>
+  </div>
+
+  <el-dialog v-model="dialog" :title="form.id ? '编辑供应商' : '新增供应商'" width="520px">
+    <el-form :model="form" label-width="90px">
+      <el-form-item label="名称"><el-input v-model="form.name" /></el-form-item>
+      <el-form-item label="联系人"><el-input v-model="form.contact" /></el-form-item>
+      <el-form-item label="手机号"><el-input v-model="form.phone" /></el-form-item>
+      <el-form-item label="地址"><el-input v-model="form.address" /></el-form-item>
+      <el-form-item label="备注"><el-input v-model="form.remark" type="textarea" :rows="2" /></el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="dialog=false">取消</el-button>
+      <el-button type="primary" @click="save">保存</el-button>
+    </template>
+  </el-dialog>
+</div>
+
+<script page-setup>
+function pageSetup(deps) {
+  const { ref, onMounted } = Vue;
+  const { api, common, toast, confirm, goPage } = deps;
+
+  const list = ref([]);
+  const loading = ref(false);
+  const keyword = ref('');
+  const page = ref(1);
+  const pageSize = ref(20);
+  const total = ref(0);
+  const dialog = ref(false);
+  const form = ref({});
+
+  function emptyForm() { return { name:'', contact:'', phone:'', address:'', remark:'', status:'启用' }; }
+
+  async function load() {
+    loading.value = true;
+    try {
+      const res = await api.get('/suppliers', { params: { keyword: keyword.value, page: page.value, pageSize: pageSize.value } });
+      list.value = res.list || []; total.value = res.total || 0;
+    } catch (e) {}
+    finally { loading.value = false; }
+  }
+  function search() { page.value = 1; load(); }
+  function reset() { keyword.value = ''; page.value = 1; load(); }
+
+  function openCreate() { form.value = emptyForm(); dialog.value = true; }
+  function openEdit(row) { form.value = JSON.parse(JSON.stringify(row)); dialog.value = true; }
+
+  async function save() {
+    const f = form.value;
+    if (!f.name) { toast('请填写名称', 'warning'); return; }
+    try {
+      if (f.id) await api.put('/suppliers/' + f.id, f);
+      else await api.post('/suppliers', f);
+      toast('保存成功', 'success'); dialog.value = false; load();
+    } catch (e) {}
+  }
+
+  async function toggleStatus(row) {
+    row.status = row.status === '启用' ? '停用' : '启用';
+    try { await api.put('/suppliers/' + row.id, { status: row.status }); toast('已' + row.status, 'success'); }
+    catch (e) { row.status = row.status === '启用' ? '停用' : '启用'; }
+  }
+
+  async function remove(row) {
+    if (row.hasPurchase) { toast('该供应商已有采购记录，不能删除，可改为停用', 'warning'); return; }
+    try { await confirm('确认删除供应商「' + row.name + '」？'); } catch (e) { return; }
+    try { await api.delete('/suppliers/' + row.id); toast('已删除', 'success'); load(); } catch (e) {}
+  }
+
+  function viewPurchases(row) {
+    toast('查看「' + row.name + '」进货记录，跳转进货单', 'info');
+    goPage(6);
+  }
+
+  onMounted(load);
+  return { list, loading, keyword, page, pageSize, total, dialog, form, common,
+    load, search, reset, openCreate, openEdit, save, toggleStatus, remove, viewPurchases };
+}
+</script>

@@ -1,0 +1,315 @@
+<div>
+  <el-tabs v-model="activeTab">
+    <!-- ============ 收银 ============ -->
+    <el-tab-pane label="🛒 收银" name="pos">
+      <div class="sales-grid">
+        <!-- 左：扫码 + 购物清单 -->
+        <div class="page-card">
+          <div class="toolbar">
+            <el-input
+              ref="scanRef" v-model="scanText" class="scan-input" size="large"
+              placeholder="扫描条码或输入商品名称后回车（可点右侧搜索）"
+              @keyup.enter="onScanEnter" clearable>
+              <template #append>
+                <el-button @click="pickerDialog=true">🔍 搜索</el-button>
+              </template>
+            </el-input>
+          </div>
+
+          <div class="table-wrap">
+            <el-table :data="cart" border size="small" empty-text="购物车为空，请扫码添加商品">
+              <el-table-column label="商品" min-width="180">
+                <template #default="{ row }">
+                  <div style="font-weight:600;">{{ row.name }}</div>
+                  <div class="muted" style="font-size:12px;">{{ row.barcode }}</div>
+                </template>
+              </el-table-column>
+              <el-table-column label="单价" width="90">
+                <template #default="{ row }">{{ common.money(row.salePrice) }}</template>
+              </el-table-column>
+              <el-table-column label="数量" width="140">
+                <template #default="{ row }">
+                  <el-input-number v-model="row.qty" :min="1" size="small" controls-position="right" @change="recompute(row)" />
+                </template>
+              </el-table-column>
+              <el-table-column label="小计" width="100">
+                <template #default="{ row }">{{ common.money(row.salePrice * row.qty) }}</template>
+              </el-table-column>
+              <el-table-column label="操作" width="70" align="center">
+                <template #default="{ $index }">
+                  <el-button text type="danger" title="移除" @click="cart.splice($index,1)"><el-icon><Delete /></el-icon></el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
+
+          <div class="toolbar" style="margin-top: 12px;">
+            <span>共 <b>{{ totalQty }}</b> 件</span>
+            <span class="muted">|</span>
+            <span>合计 <b class="cart-total">{{ common.money(totalAmount) }}</b></span>
+            <div class="grow"></div>
+            <el-button @click="parkOrder" :disabled="!cart.length">📋 挂单</el-button>
+            <el-button @click="clearCart" :disabled="!cart.length">清空</el-button>
+            <el-button type="primary" size="large" :disabled="!cart.length" @click="openSettle">💰 结算</el-button>
+          </div>
+        </div>
+
+        <!-- 右：挂单列表 -->
+        <div class="page-card">
+          <div class="card-title">挂单（{{ parked.length }}）</div>
+          <div v-if="!parked.length" class="empty-tip">暂无挂单</div>
+          <div v-for="(p, i) in parked" :key="i" class="scanned-item">
+            <div>
+              <div style="font-weight:600;">{{ p.time }} · {{ p.items.length }} 件</div>
+              <div class="muted" style="font-size:12px;">合计 {{ common.money(p.amount) }}</div>
+            </div>
+            <div>
+              <el-button text type="primary" @click="restorePark(i)">恢复</el-button>
+              <el-button text type="danger" @click="parked.splice(i,1)">删</el-button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </el-tab-pane>
+
+    <!-- ============ 销售单列表 ============ -->
+    <el-tab-pane label="📄 销售单列表" name="orders">
+      <div class="page-card">
+        <div class="toolbar">
+          <el-input v-model="orderKeyword" placeholder="单号 / 微信号" clearable style="width:200px;" @keyup.enter="searchOrders" />
+          <el-date-picker v-model="dateFrom" type="date" value-format="YYYY-MM-DD" placeholder="开始日期" clearable style="width:150px;" />
+          <span style="margin:0 4px;color:#999;">至</span>
+          <el-date-picker v-model="dateTo" type="date" value-format="YYYY-MM-DD" placeholder="结束日期" clearable style="width:150px;" />
+          <el-select v-model="payMethodFilter" placeholder="收款方式" clearable style="width:130px;">
+            <el-option label="现金" value="现金" /><el-option label="微信" value="微信" />
+            <el-option label="支付宝" value="支付宝" /><el-option label="赊账" value="赊账" />
+          </el-select>
+          <el-button type="primary" @click="searchOrders">查询</el-button>
+        </div>
+        <div class="table-wrap">
+          <el-table :data="orders" v-loading="ordersLoading" border size="small">
+            <el-table-column label="单号" prop="orderNo" width="160" />
+            <el-table-column label="总金额" width="100"><template #default="{ row }">{{ common.money(row.totalAmount) }}</template></el-table-column>
+            <el-table-column label="实收" width="100"><template #default="{ row }">{{ common.money(row.payAmount) }}</template></el-table-column>
+            <el-table-column label="收款方式" prop="payMethod" width="100" />
+            <el-table-column label="状态" width="120">
+              <template #default="{ row }">
+                <el-tag v-if="row.isCredit" type="danger" size="small">赊</el-tag>
+                <el-tag :type="row.status === '已完成' ? 'success' : 'warning'" size="small" style="margin-left:4px;">{{ row.status }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作人" prop="createdByName" width="100" />
+            <el-table-column label="时间" prop="createdAt" width="160" />
+          </el-table>
+        </div>
+        <div class="pagination-wrap">
+          <el-pagination
+            v-model:current-page="orderPage" v-model:page-size="orderPageSize"
+            :total="orderTotal" layout="total, prev, pager, next" @current-change="loadOrders" />
+        </div>
+      </div>
+    </el-tab-pane>
+  </el-tabs>
+
+  <!-- 商品搜索选择 -->
+  <el-dialog v-model="pickerDialog" title="搜索商品" width="560px">
+    <el-input v-model="pickKeyword" placeholder="名称 / 条码" @keyup.enter="searchProducts" clearable>
+      <template #append><el-button @click="searchProducts">搜索</el-button></template>
+    </el-input>
+    <el-table :data="pickList" size="small" style="margin-top:10px;" max-height="320">
+      <el-table-column label="名称" prop="name" />
+      <el-table-column label="条码" prop="barcode" width="140" />
+      <el-table-column label="售价" width="90"><template #default="{ row }">{{ common.money(row.salePrice) }}</template></el-table-column>
+      <el-table-column label="库存" prop="stockQuantity" width="70" />
+      <el-table-column label="操作" width="70" align="center"><template #default="{ row }"><el-button text type="primary" title="加入购物车" @click="pickProduct(row)"><el-icon><Plus /></el-icon></el-button></template></el-table-column>
+    </el-table>
+  </el-dialog>
+
+  <!-- 结算弹窗 -->
+  <el-dialog v-model="settleDialog" title="结算" width="420px" @closed="onSettleClosed">
+    <div style="text-align:center; margin-bottom:14px;">
+      <div class="muted">应收金额</div>
+      <div class="cart-total" style="font-size:30px;">{{ common.money(payAmount) }}</div>
+    </div>
+    <el-form label-width="90px">
+      <el-form-item label="优惠金额">
+        <el-input-number v-model="discount" :min="0" :max="totalAmount" :precision="2" controls-position="right" @change="recomputePay" />
+      </el-form-item>
+      <el-form-item label="收款方式">
+        <el-radio-group v-model="payMethod">
+          <el-radio-button label="现金">现金</el-radio-button>
+          <el-radio-button label="微信">微信</el-radio-button>
+          <el-radio-button label="支付宝">支付宝</el-radio-button>
+          <el-radio-button label="赊账">赊账</el-radio-button>
+        </el-radio-group>
+      </el-form-item>
+      <el-form-item v-if="payMethod === '现金'" label="实收">
+        <el-input-number v-model="cashReceived" :min="0" :precision="2" controls-position="right" style="width:180px;" />
+        <span style="margin-left:10px;">找零 <b class="success-text">{{ common.money(changeAmount) }}</b></span>
+      </el-form-item>
+      <el-form-item v-if="payMethod === '赊账'" label="顾客微信">
+        <el-input v-model="wechatId" placeholder="记录微信号便于追款" />
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="settleDialog=false">取消</el-button>
+      <el-button type="primary" :loading="settling" @click="confirmSettle">确认收款</el-button>
+    </template>
+  </el-dialog>
+</div>
+
+<script page-setup>
+function pageSetup(deps) {
+  const { ref, computed, onMounted, nextTick } = Vue;
+  const { api, common, toast } = deps;
+
+  const activeTab = ref('pos');
+
+  // ---- 收银 ----
+  const scanText = ref('');
+  const scanRef = ref(null);
+  const cart = ref([]);
+
+  const totalQty = computed(() => cart.value.reduce((s, i) => s + Number(i.qty || 0), 0));
+  const totalAmount = computed(() => cart.value.reduce((s, i) => s + Number(i.salePrice || 0) * Number(i.qty || 0), 0));
+
+  function focusScan() { if (scanRef.value) scanRef.value.focus(); }
+
+  async function onScanEnter() {
+    const code = scanText.value.trim();
+    scanText.value = '';
+    if (!code) return;
+    // 先按条码查
+    try {
+      const p = await api.get('/products/by-barcode/' + encodeURIComponent(code));
+      addProduct(p);
+    } catch (e) {
+      // 退化为按名称查
+      try {
+        const res = await api.get('/products', { params: { keyword: code, pageSize: 1 } });
+        if (res.list && res.list.length) addProduct(res.list[0]);
+        else toast('未找到商品：' + code, 'warning');
+      } catch (err) {}
+    }
+  }
+
+  function addProduct(p) {
+    const exist = cart.value.find(i => i.barcode === p.barcode || i.id === p.id);
+    if (exist) exist.qty++;
+    else cart.value.push({ id: p.id, barcode: p.barcode, name: p.name, salePrice: Number(p.salePrice), qty: 1 });
+    focusScan();
+  }
+
+  function recompute() {}
+  function clearCart() { cart.value = []; focusScan(); }
+
+  // ---- 挂单 ----
+  const parked = ref([]);
+  function parkOrder() {
+    if (!cart.value.length) return;
+    parked.value.push({ time: common.formatDateTime(new Date()), items: JSON.parse(JSON.stringify(cart.value)), amount: totalAmount.value });
+    cart.value = [];
+    toast('已挂单', 'success');
+    focusScan();
+  }
+  function restorePark(i) {
+    const p = parked.value.splice(i, 1)[0];
+    cart.value = p.items;
+    activeTab.value = 'pos';
+    nextTick(focusScan);
+  }
+
+  // ---- 商品搜索 ----
+  const pickerDialog = ref(false);
+  const pickKeyword = ref('');
+  const pickList = ref([]);
+  async function searchProducts() {
+    try {
+      const res = await api.get('/products', { params: { keyword: pickKeyword.value, pageSize: 50 } });
+      pickList.value = res.list || [];
+    } catch (e) {}
+  }
+  function pickProduct(p) { addProduct(p); pickerDialog.value = false; }
+
+  // ---- 结算 ----
+  const settleDialog = ref(false);
+  const discount = ref(0);
+  const payMethod = ref('现金');
+  const cashReceived = ref(0);
+  const wechatId = ref('');
+  const settling = ref(false);
+
+  const payAmount = computed(() => Math.max(0, totalAmount.value - (discount.value || 0)));
+  const changeAmount = computed(() => Math.max(0, (cashReceived.value || 0) - payAmount.value));
+
+  function openSettle() {
+    discount.value = 0; payMethod.value = '现金'; cashReceived.value = 0; wechatId.value = '';
+    settleDialog.value = true;
+  }
+  function recomputePay() {}
+  function onSettleClosed() {}
+
+  async function confirmSettle() {
+    if (payMethod.value === '现金' && (cashReceived.value || 0) < payAmount.value) { toast('实收金额不足', 'warning'); return; }
+    if (payMethod.value === '赊账' && !wechatId.value) { toast('请输入顾客微信号', 'warning'); return; }
+    settling.value = true;
+    const payload = {
+      items: cart.value.map(i => ({ productId: i.id, barcode: i.barcode, name: i.name, qty: i.qty, unitPrice: i.salePrice, subTotal: i.salePrice * i.qty })),
+      totalAmount: totalAmount.value, discountAmount: discount.value, payAmount: payAmount.value,
+      payMethod: payMethod.value, cashAmount: payMethod.value === '现金' ? cashReceived.value : 0,
+      changeAmount: changeAmount.value, isCredit: payMethod.value === '赊账', wechatId: wechatId.value
+    };
+    try {
+      const res = await api.post('/sales', payload);
+      toast('收款成功，单号 ' + res.orderNo, 'success');
+      cart.value = [];
+      settleDialog.value = false;
+      focusScan();
+    } catch (e) {}
+    finally { settling.value = false; }
+  }
+
+  // ---- 销售单列表 ----
+  const orders = ref([]);
+  const ordersLoading = ref(false);
+  const orderKeyword = ref('');
+  const dateFrom = ref('');
+  const dateTo = ref('');
+  const payMethodFilter = ref('');
+  const orderPage = ref(1);
+  const orderPageSize = ref(20);
+  const orderTotal = ref(0);
+
+  async function loadOrders() {
+    ordersLoading.value = true;
+    try {
+      const { from, to } = common.normalizeDatePair(dateFrom.value, dateTo.value);
+      const params = {
+        keyword: orderKeyword.value,
+        payMethod: payMethodFilter.value || '',
+        page: orderPage.value, pageSize: orderPageSize.value,
+      };
+      if (from) params.dateFrom = from;
+      if (to) params.dateTo = to;
+      const res = await api.get('/sales', { params });
+      orders.value = res.list || []; orderTotal.value = res.total || 0;
+    } catch (e) {}
+    finally { ordersLoading.value = false; }
+  }
+  function searchOrders() { orderPage.value = 1; loadOrders(); }
+
+  onMounted(() => { focusScan(); loadOrders(); });
+
+  return {
+    activeTab, scanText, scanRef, cart, totalQty, totalAmount,
+    onScanEnter, recompute, clearCart, focusScan,
+    parked, parkOrder, restorePark,
+    pickerDialog, pickKeyword, pickList, searchProducts, pickProduct,
+    settleDialog, discount, payMethod, cashReceived, wechatId, settling,
+    payAmount, changeAmount, openSettle, recomputePay, onSettleClosed, confirmSettle,
+    orders, ordersLoading, orderKeyword, dateFrom, dateTo, payMethodFilter,
+    orderPage, orderPageSize, orderTotal, loadOrders, searchOrders,
+    common, toast
+  };
+}
+</script>

@@ -1,0 +1,53 @@
+<div>
+  <div class="stat-row">
+    <div class="stat-card danger"><div class="label">缺货商品</div><div class="value">{{ shortageList.length }}</div></div>
+    <div class="stat-card warn"><div class="label">预警商品</div><div class="value">{{ warningList.length }}</div></div>
+  </div>
+  <div class="page-card">
+    <div class="toolbar">
+      <span style="font-weight:600;">库存预警清单</span>
+      <div class="grow"></div>
+      <el-button @click="exportList">导出采购建议</el-button>
+      <el-button type="primary" @click="goPage(6)">前往进货</el-button>
+    </div>
+    <div class="table-wrap">
+      <el-table :data="all" v-loading="loading" border size="small">
+        <el-table-column label="条码" prop="barcode" width="150" />
+        <el-table-column label="名称" prop="name" min-width="160" />
+        <el-table-column label="当前库存" prop="stockQuantity" width="100" />
+        <el-table-column label="安全库存" prop="safetyStock" width="100" />
+        <el-table-column label="缺口" width="90"><template #default="{ row }"><span class="danger-text">{{ row.safetyStock - row.stockQuantity }}</span></template></el-table-column>
+        <el-table-column label="建议补货" width="100"><template #default="{ row }">{{ Math.max(row.safetyStock * 2 - row.stockQuantity, row.safetyStock) }}</template></el-table-column>
+        <el-table-column label="状态" width="90"><template #default="{ row }"><el-tag :type="row.stockQuantity <= 0 ? 'danger' : 'warning'" size="small">{{ row.stockQuantity <= 0 ? '缺货' : '预警' }}</el-tag></template></el-table-column>
+      </el-table>
+    </div>
+  </div>
+</div>
+
+<script page-setup>
+function pageSetup(deps) {
+  const { ref, computed, onMounted } = Vue;
+  const { api, common, toast, goPage } = deps;
+  const list = ref([]); const loading = ref(false);
+
+  const all = computed(() => list.value.filter(r => (r.stockQuantity||0) <= (r.safetyStock||0)));
+  const shortageList = computed(() => all.value.filter(r => (r.stockQuantity||0) <= 0));
+  const warningList = computed(() => all.value.filter(r => (r.stockQuantity||0) > 0));
+
+  async function load() {
+    loading.value = true;
+    try { const res = await api.get('/stocks', { params: { pageSize: 500 } }); list.value = res.list||[]; } catch(e){}
+    finally { loading.value = false; }
+  }
+  function exportList() {
+    if (!all.value.length) { toast('暂无预警','warning'); return; }
+    const header = ['条码','名称','当前库存','安全库存','缺口','建议补货'];
+    const lines = [header.join(',')];
+    all.value.forEach(r => lines.push([r.barcode,r.name,r.stockQuantity,r.safetyStock,r.safetyStock-r.stockQuantity,Math.max(r.safetyStock*2-r.stockQuantity,r.safetyStock)].map(v=>'"'+(v==null?'':v)+'"').join(',')));
+    common.downloadBlob(new Blob(['\ufeff'+lines.join('\n')], {type:'text/csv;charset=utf-8'}), '采购建议.csv');
+    toast('已导出','success');
+  }
+  onMounted(load);
+  return { list, loading, all, shortageList, warningList, exportList, goPage, common, toast };
+}
+</script>

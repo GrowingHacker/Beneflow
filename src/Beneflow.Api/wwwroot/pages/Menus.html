@@ -1,0 +1,81 @@
+<div>
+  <div class="page-card">
+    <div class="toolbar">
+      <el-button type="success" @click="openCreate(null)">+ 新增菜单</el-button>
+    </div>
+    <div class="table-wrap">
+      <el-table :data="treeData" row-key="id" border default-expand-all size="small" :tree-props="{ children: 'children' }">
+        <el-table-column label="名称" prop="name" min-width="200" />
+        <el-table-column label="类型" width="90"><template #default="{ row }"><el-tag size="small" :type="row.type === '目录' ? '' : row.type === '菜单' ? 'success' : 'warning'">{{ row.type }}</el-tag></template></el-table-column>
+        <el-table-column label="权限标识" prop="permCode" width="160" />
+        <el-table-column label="排序" prop="sort" width="80" />
+        <el-table-column label="操作" width="150" fixed="right" align="center">
+          <template #default="{ row }">
+            <div class="op-btns">
+              <el-button text type="primary" title="新增子项" @click="openCreate(row)"><el-icon><Plus /></el-icon></el-button>
+              <el-button text type="warning" title="编辑" @click="openEdit(row)"><el-icon><Edit /></el-icon></el-button>
+              <el-button text type="danger" title="删除" @click="remove(row)"><el-icon><Delete /></el-icon></el-button>
+            </div>
+          </template>
+        </el-table-column>
+      </el-table>
+    </div>
+  </div>
+
+  <el-dialog v-model="dialog" :title="form.id ? '编辑菜单' : '新增菜单'" width="500px">
+    <el-form :model="form" label-width="90px">
+      <el-form-item label="类型">
+        <el-radio-group v-model="form.type" :disabled="!!form.id"><el-radio label="目录">目录</el-radio><el-radio label="菜单">菜单</el-radio><el-radio label="按钮">按钮</el-radio></el-radio-group>
+      </el-form-item>
+      <el-form-item label="名称"><el-input v-model="form.name" /></el-form-item>
+      <el-form-item label="权限标识"><el-input v-model="form.permCode" :placeholder="form.type === '目录' ? '目录无需权限码' : '如 sales、users'" /></el-form-item>
+      <el-form-item label="排序"><el-input-number v-model="form.sort" :min="0" controls-position="right" /></el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="dialog=false">取消</el-button>
+      <el-button type="primary" @click="save">保存</el-button>
+    </template>
+  </el-dialog>
+</div>
+
+<script page-setup>
+function pageSetup(deps) {
+  const { ref, onMounted } = Vue;
+  const { api, toast, confirm } = deps;
+
+  const treeData = ref([]);
+  const loading = ref(false);
+  const dialog = ref(false); const form = ref({});
+
+  async function load() {
+    loading.value = true;
+    try { treeData.value = await api.get('/menus') || []; } catch(e){}
+    finally { loading.value = false; }
+  }
+  function openCreate(parent) {
+    form.value = { type: '菜单', name: '', permCode: '', sort: 0, parentId: parent ? parent.id : null };
+    dialog.value = true;
+  }
+  function openEdit(row) { form.value = Object.assign({}, row); dialog.value = true; }
+  async function save() {
+    const f = form.value;
+    if (!f.name || !f.name.trim()) { toast('请填写名称','warning'); return; }
+    if (f.id) {
+      await api.put('/menus/' + f.id, { name: f.name.trim(), permCode: (f.permCode||'').trim(), sort: f.sort });
+      toast('保存成功','success');
+    } else {
+      await api.post('/menus', { name: f.name.trim(), type: f.type, permCode: (f.permCode||'').trim(), parentId: f.parentId, sort: f.sort });
+      toast('新增成功','success');
+    }
+    dialog.value = false; load();
+  }
+  async function remove(row) {
+    try { await confirm('确认删除「'+row.name+'」？'); } catch(e){ return; }
+    await api.delete('/menus/' + row.id);
+    toast('已删除','success'); load();
+  }
+
+  onMounted(load);
+  return { treeData, loading, dialog, form, load, openCreate, openEdit, save, remove, toast };
+}
+</script>
