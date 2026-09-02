@@ -6,6 +6,19 @@ obj/
 .vs/
 artifacts/
 
+## Publish output (production build)
+publish/
+publish-*/
+D:/Beneflow/publish/
+D:/Beneflow/publish-*/
+
+## Archives (release packages)
+*.zip
+*.7z
+*.tar.gz
+*.tgz
+*.rar
+
 ## Logs & local data
 logs/
 *.log
@@ -15,6 +28,7 @@ backups/
 
 ## Secrets & certs (never commit)
 appsettings.json
+appsettings.Production.json
 *.pfx
 *.pem
 *.key

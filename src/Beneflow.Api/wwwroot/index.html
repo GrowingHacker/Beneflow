@@ -4,6 +4,16 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>百惠通 - 个体百货商店管理系统</title>
+  <script>
+    // 早期登录态预检：在加载 Vue/ElementPlus 等大库之前先看 localStorage，
+    // 未登录立即跳转 login.html，避免 0.5s 白屏闪烁。
+    // 注：app.js initApp() 中仍保留二次校验作为兜底（防止 token 损坏/被改）。
+    (function () {
+      var t = localStorage.getItem('token');
+      var u = localStorage.getItem('user');
+      if (!t || !u) { location.replace('/login.html'); }
+    })();
+  </script>
   <link rel="stylesheet" href="/lib/element-plus/index.css" />
   <link rel="stylesheet" href="/css/app.css?v=6" />
   <script src="/lib/vue/vue.global.prod.js"></script>

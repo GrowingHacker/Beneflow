@@ -10,6 +10,18 @@ using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// ---------- Windows Service 托管 ----------
+// 让 dotnet 进程可作为系统服务运行；以控制台直接启动时此调用不影响行为。
+// 关键作用：
+//   1. ContentRoot 默认设为程序所在目录（而非 %SystemRoot%\System32，避免 wwwroot 找不到）
+//   2. 把 Console 输出重定向到 Windows 事件日志，便于服务崩溃时排查
+//   3. 注册成 Windows Service 后，系统会以 LocalSystem 身份启动此进程
+builder.Host.UseWindowsService(o =>
+{
+    // 出现在 Windows 服务管理器里的展示名
+    o.ServiceName = "Beneflow.Api";
+});
+
 // ---------- 本地 HTTPS（为手机端实时扫码提供摄像头安全上下文） ----------
 // 根 CA 缓存在 %LocalAppData%\Beneflow\tls；叶子证书 SAN 覆盖 localhost + 当前局域网 IPv4
 var tls = new Beneflow.Api.Services.TlsCertService();
