@@ -140,6 +140,9 @@ public class CreditSale
     public int SaleOrderId { get; set; }
     [System.ComponentModel.DataAnnotations.StringLength(50)]
     public string WechatId { get; set; } = "";
+    [System.ComponentModel.DataAnnotations.StringLength(20)]
+    public string? Phone { get; set; }
+    public string? Remark { get; set; }
     public decimal CreditAmount { get; set; }
     public decimal PaidAmount { get; set; }
     public decimal RemainingAmount { get; set; }

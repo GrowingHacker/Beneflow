@@ -269,6 +269,8 @@ public static class DbSeeder
                 var cs = new CreditSale
                 {
                     SaleOrderId = so.Id, WechatId = s.Wx, CreditAmount = payAmount,
+                    Phone = settled ? "13800138000" : "13900139000",
+                    Remark = settled ? "已按约定结清" : "待跟进还款",
                     PaidAmount = settled ? payAmount : 0,
                     RemainingAmount = settled ? 0 : payAmount,
                     Status = settled,

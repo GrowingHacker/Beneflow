@@ -38,6 +38,7 @@ public class CreateSaleDto
     public decimal ChangeAmount { get; set; }
     public bool IsCredit { get; set; }
     public string? WechatId { get; set; }
+    public string? Phone { get; set; }
     public string? Remark { get; set; }
 }
 
@@ -117,6 +118,12 @@ public class CreateStockCheckDto
 public class SettleCreditDto
 {
     public string PayMethod { get; set; } = "微信";
+}
+
+public class UpdateCreditDto
+{
+    public string? Phone { get; set; }
+    public string? Remark { get; set; }
 }
 
 public class ProductUpsertDto

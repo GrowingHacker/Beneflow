@@ -1,12 +1,15 @@
 <div>
   <div class="stat-row">
-    <div class="stat-card danger"><div class="label">总欠款</div><div class="value">{{ common.money(totalCredit) }}</div></div>
-    <div class="stat-card warn"><div class="label">未结清笔数</div><div class="value">{{ unsettledCount }}</div></div>
-    <div class="stat-card success"><div class="label">已结清笔数</div><div class="value">{{ settledCount }}</div></div>
+    <div class="stat-card danger"><div class="label">总欠款</div><div class="value">{{ common.money(stats.totalCredit) }}</div></div>
+    <div class="stat-card warn"><div class="label">未结清笔数</div><div class="value">{{ stats.unsettled }}</div></div>
+    <div class="stat-card success"><div class="label">已结清笔数</div><div class="value">{{ stats.settled }}</div></div>
   </div>
   <div class="page-card">
     <div class="toolbar">
-      <el-input v-model="wechatId" placeholder="顾客微信号" clearable style="width:200px;" @keyup.enter="search" />
+      <el-input v-model="keyword" placeholder="微信号 / 手机号 / 备注 / 单号" clearable style="width:240px;" @keyup.enter="search" />
+      <el-date-picker v-model="dateFrom" type="date" value-format="YYYY-MM-DD" placeholder="开始日期" clearable style="width:150px;" />
+      <span style="margin:0 4px;color:#999;">至</span>
+      <el-date-picker v-model="dateTo" type="date" value-format="YYYY-MM-DD" placeholder="结束日期" clearable style="width:150px;" />
       <el-select v-model="statusFilter" placeholder="结清状态" clearable style="width:130px;">
         <el-option label="未结清" value="未结清" /><el-option label="已结清" value="已结清" />
       </el-select>
@@ -14,15 +17,17 @@
       <el-button @click="exportList">导出</el-button>
     </div>
     <div class="table-wrap">
-      <el-table :data="filtered" v-loading="loading" border size="small">
-        <el-table-column label="微信号" prop="wechatId" width="140" />
+      <el-table :data="list" v-loading="loading" border size="small">
+        <el-table-column label="微信号" width="140"><template #default="{ row }"><span :class="{ muted: !row.wechatId }">{{ row.wechatId || '—' }}</span></template></el-table-column>
+        <el-table-column label="手机号" width="130"><template #default="{ row }"><span :class="{ muted: !row.phone }">{{ row.phone || '—' }}</span></template></el-table-column>
         <el-table-column label="关联单号" prop="saleOrderNo" width="160" />
         <el-table-column label="欠款金额" width="110"><template #default="{ row }">{{ common.money(row.creditAmount) }}</template></el-table-column>
         <el-table-column label="已还" width="100"><template #default="{ row }">{{ common.money(row.paidAmount) }}</template></el-table-column>
         <el-table-column label="剩余" width="110"><template #default="{ row }"><span class="danger-text">{{ common.money(row.remainingAmount) }}</span></template></el-table-column>
         <el-table-column label="状态" width="90"><template #default="{ row }"><el-tag :type="row.status === '已结清' ? 'success' : 'danger'" size="small">{{ row.status }}</el-tag></template></el-table-column>
+        <el-table-column label="备注" min-width="120" show-overflow-tooltip><template #default="{ row }"><span :class="{ muted: !row.remark }">{{ row.remark || '—' }}</span></template></el-table-column>
         <el-table-column label="赊账时间" prop="createdAt" width="160" />
-        <el-table-column label="操作" width="70" fixed="right" align="center"><template #default="{ row }"><el-button v-if="row.status === '未结清'" text type="success" title="结清" @click="openSettle(row)"><el-icon><Money /></el-icon></el-button></template></el-table-column>
+        <el-table-column label="操作" width="100" fixed="right" align="center"><template #default="{ row }"><el-button text type="primary" title="编辑" @click="openEdit(row)"><el-icon><Edit /></el-icon></el-button><el-button v-if="row.status === '未结清'" text type="success" title="结清" @click="openSettle(row)"><el-icon><Money /></el-icon></el-button></template></el-table-column>
       </el-table>
     </div>
     <div class="pagination-wrap">
@@ -51,29 +56,69 @@
       <el-button type="primary" :loading="settling" @click="confirmSettle">确认结清</el-button>
     </template>
   </el-dialog>
+
+  <el-dialog v-model="editDialog" title="编辑赊账信息" width="420px">
+    <el-form label-width="80px">
+      <el-form-item label="微信号">
+        <span>{{ editRow?.wechatId }}</span>
+      </el-form-item>
+      <el-form-item label="手机号">
+        <el-input v-model="editForm.phone" placeholder="顾客手机号" maxlength="20" />
+      </el-form-item>
+      <el-form-item label="备注">
+        <el-input v-model="editForm.remark" type="textarea" :rows="3" placeholder="备注信息" />
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="editDialog=false">取消</el-button>
+      <el-button type="primary" :loading="editSaving" @click="confirmEdit">保存</el-button>
+    </template>
+  </el-dialog>
 </div>
 
 <script page-setup>
 function pageSetup(deps) {
-  const { ref, computed, onMounted } = Vue;
+  const { ref, onMounted } = Vue;
   const { api, common, toast, confirm } = deps;
   const list = ref([]); const loading = ref(false);
-  const wechatId = ref(''); const statusFilter = ref('');
+  const keyword = ref(''); const statusFilter = ref('');
+  const dateFrom = ref(''); const dateTo = ref('');
   const page = ref(1); const pageSize = ref(20); const total = ref(0);
-  const filtered = computed(() => statusFilter.value ? list.value.filter(r => r.status === statusFilter.value) : list.value);
-
-  const totalCredit = computed(() => list.value.filter(r=>r.status==='未结清').reduce((s,r)=>s+Number(r.remainingAmount||0),0));
-  const unsettledCount = computed(() => list.value.filter(r=>r.status==='未结清').length);
-  const settledCount = computed(() => list.value.filter(r=>r.status==='已结清').length);
+  const stats = ref({ totalCredit: 0, unpaidTotal: 0, unsettled: 0, settled: 0 });
 
   async function load() {
     loading.value = true;
-    try { const res = await api.get('/credits', { params: { wechatId: wechatId.value, page: page.value, pageSize: pageSize.value } }); list.value = res.list||[]; total.value = res.total||0; } catch(e){}
+    try {
+      const { from, to } = common.normalizeDatePair(dateFrom.value, dateTo.value);
+      const params = { keyword: keyword.value, status: statusFilter.value, page: page.value, pageSize: pageSize.value };
+      if (from) params.dateFrom = from;
+      if (to) params.dateTo = to;
+      const res = await api.get('/credits', { params });
+      list.value = res.list || [];
+      total.value = res.total || 0;
+      if (res.stats) stats.value = res.stats;
+    } catch(e){}
     finally { loading.value = false; }
   }
   function search() { page.value = 1; load(); }
 
   const settleDialog = ref(false); const current = ref(null); const payMethod = ref('微信'); const settling = ref(false);
+
+  const editDialog = ref(false); const editRow = ref(null); const editSaving = ref(false);
+  const editForm = ref({ phone: '', remark: '' });
+  function openEdit(row) {
+    editRow.value = row;
+    editForm.value = { phone: row.phone || '', remark: row.remark || '' };
+    editDialog.value = true;
+  }
+  async function confirmEdit() {
+    editSaving.value = true;
+    try {
+      await api.put('/credits/' + editRow.value.id, { phone: editForm.value.phone, remark: editForm.value.remark });
+      toast('已保存', 'success'); editDialog.value = false; load();
+    } catch(e){}
+    finally { editSaving.value = false; }
+  }
   function openSettle(row) { current.value = row; payMethod.value = '微信'; settleDialog.value = true; }
   async function confirmSettle() {
     try { await confirm('确认结清此笔赊账？'); } catch(e){ return; }
@@ -82,17 +127,19 @@ function pageSetup(deps) {
     finally { settling.value = false; }
   }
   function exportList() {
-    if (!filtered.value.length) { toast('无数据','warning'); return; }
-    const header = ['微信号','单号','欠款','已还','剩余','状态','赊账时间'];
+    if (!list.value.length) { toast('无数据','warning'); return; }
+    const header = ['微信号','手机号','单号','欠款','已还','剩余','状态','备注','赊账时间'];
     const lines = [header.join(',')];
-    filtered.value.forEach(r => lines.push([r.wechatId,r.saleOrderNo,r.creditAmount,r.paidAmount,r.remainingAmount,r.status,r.createdAt].map(v=>'"'+(v==null?'':v)+'"').join(',')));
+    list.value.forEach(r => lines.push([r.wechatId,r.phone,r.saleOrderNo,r.creditAmount,r.paidAmount,r.remainingAmount,r.status,r.remark,r.createdAt].map(v=>'"'+(v==null?'':v)+'"').join(',')));
     common.downloadBlob(new Blob(['\ufeff'+lines.join('\n')], {type:'text/csv;charset=utf-8'}), '赊账记录.csv');
     toast('已导出','success');
   }
 
   onMounted(load);
-  return { list, loading, wechatId, statusFilter, filtered, page, pageSize, total,
-    totalCredit, unsettledCount, settledCount, load, search,
-    settleDialog, current, payMethod, settling, openSettle, confirmSettle, exportList, common, toast };
+  return { list, loading, keyword, statusFilter, dateFrom, dateTo, page, pageSize, total, stats,
+    load, search,
+    settleDialog, current, payMethod, settling, openSettle, confirmSettle,
+    editDialog, editRow, editSaving, editForm, openEdit, confirmEdit,
+    exportList, common, toast };
 }
 </script>

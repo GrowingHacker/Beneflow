@@ -116,8 +116,6 @@ public class SaleService : ISaleService
         if (dto.PayMethod == "赊账" && !dto.IsCredit)
             dto.IsCredit = true;
 
-        if (dto.IsCredit && string.IsNullOrWhiteSpace(dto.WechatId))
-            return ApiResult<object>.Fail("赊账必须填写顾客微信号");
         if (dto.Items.Any(i => i.Qty <= 0)) return ApiResult<object>.Fail("商品数量必须大于 0");
 
         // 系统设置是否允许赊账
@@ -154,7 +152,7 @@ public class SaleService : ISaleService
                 CashAmount = Math.Round(dto.CashAmount, 2),
                 ChangeAmount = Math.Round(dto.ChangeAmount, 2),
                 IsCredit = dto.IsCredit,
-                WechatId = dto.IsCredit ? dto.WechatId!.Trim() : null,
+                WechatId = dto.IsCredit ? (string.IsNullOrWhiteSpace(dto.WechatId) ? null : dto.WechatId!.Trim()) : null,
                 Remark = dto.Remark,
                 CreatedBy = _me.Id, CreatedAt = DateTime.Now,
             };
@@ -191,7 +189,9 @@ public class SaleService : ISaleService
             {
                 _db.CreditSales.Add(new CreditSale
                 {
-                    SaleOrderId = so.Id, WechatId = dto.WechatId!.Trim(),
+                    SaleOrderId = so.Id, WechatId = string.IsNullOrWhiteSpace(dto.WechatId) ? "" : dto.WechatId!.Trim(),
+                    Phone = string.IsNullOrWhiteSpace(dto.Phone) ? null : dto.Phone!.Trim(),
+                    Remark = string.IsNullOrWhiteSpace(dto.Remark) ? null : dto.Remark!.Trim(),
                     CreditAmount = so.PayAmount, PaidAmount = 0, RemainingAmount = so.PayAmount,
                     Status = false, CreatedAt = so.CreatedAt,
                 });
@@ -360,7 +360,7 @@ public class SaleService : ISaleService
     // ================= 赊账 =================
 
     /// <summary>赊账列表 + 全量统计（总欠款、未结清笔数、已结清笔数）</summary>
-    public async Task<object> CreditListAsync(string? wechatId, string? status, int page, int pageSize)
+    public async Task<object> CreditListAsync(string? keyword, string? status, string? dateFrom, string? dateTo, int page, int pageSize)
     {
         // 兼容旧字符串参数：未结清/已结清 → bool（true=已结清）
         bool? settled = status switch { "已结清" => true, "未结清" => false, _ => (bool?)null };
@@ -368,11 +368,19 @@ public class SaleService : ISaleService
         var filtered =
             from c in _db.CreditSales.AsNoTracking()
             join o in _db.SaleOrders on c.SaleOrderId equals o.Id
-            where string.IsNullOrEmpty(wechatId) || c.WechatId.Contains(wechatId)
+            where string.IsNullOrEmpty(keyword)
+                  || c.WechatId.Contains(keyword)
+                  || (c.Phone != null && c.Phone.Contains(keyword))
+                  || (c.Remark != null && c.Remark.Contains(keyword))
+                  || o.OrderNo.Contains(keyword)
             orderby c.Id descending
             select new { c, saleOrderNo = o.OrderNo };
         if (settled != null)
             filtered = filtered.Where(x => x.c.Status == settled);
+        if (!string.IsNullOrEmpty(dateFrom) && DateTime.TryParse(dateFrom, out var df))
+            filtered = filtered.Where(x => x.c.CreatedAt >= df);
+        if (!string.IsNullOrEmpty(dateTo) && DateTime.TryParse(dateTo, out var dt))
+            filtered = filtered.Where(x => x.c.CreatedAt < dt.AddDays(1));
 
         var total = await filtered.CountAsync();
         pageSize = pageSize <= 0 ? 20 : Math.Min(pageSize, 200);
@@ -382,6 +390,7 @@ public class SaleService : ISaleService
         var list = rows.Select(r => (object)new
         {
             id = r.c.Id, saleOrderNo = r.saleOrderNo, wechatId = r.c.WechatId,
+            phone = r.c.Phone, remark = r.c.Remark,
             creditAmount = r.c.CreditAmount, paidAmount = r.c.PaidAmount,
             remainingAmount = r.c.RemainingAmount,
             status = r.c.Status ? "已结清" : "未结清",
@@ -389,10 +398,18 @@ public class SaleService : ISaleService
             createdAt = r.c.CreatedAt.ToString("yyyy-MM-dd HH:mm"),
         }).ToList();
 
-        // 统计为全量口径（跨分页）
+        // 统计为全量口径（跨分页，与列表同过滤条件）
         var statsQ =
             from c in _db.CreditSales.AsNoTracking()
-            where string.IsNullOrEmpty(wechatId) || c.WechatId.Contains(wechatId!)
+            join o in _db.SaleOrders on c.SaleOrderId equals o.Id
+            where string.IsNullOrEmpty(keyword)
+                  || c.WechatId.Contains(keyword)
+                  || (c.Phone != null && c.Phone.Contains(keyword))
+                  || (c.Remark != null && c.Remark.Contains(keyword))
+                  || o.OrderNo.Contains(keyword)
+            where settled == null || c.Status == settled
+            where string.IsNullOrEmpty(dateFrom) || c.CreatedAt >= DateTime.Parse(dateFrom)
+            where string.IsNullOrEmpty(dateTo) || c.CreatedAt < DateTime.Parse(dateTo).AddDays(1)
             group c by 1 into g
             select new
             {
@@ -450,5 +467,24 @@ public class SaleService : ISaleService
             await tx.RollbackAsync();
             throw new InvalidOperationException("结清失败：" + ex.Message, ex);
         }
+    }
+
+    /// <summary>更新赊账记录的手机号和备注</summary>
+    public async Task<ApiResult> UpdateCreditAsync(int id, UpdateCreditDto dto)
+    {
+        var c = await _db.CreditSales.FirstOrDefaultAsync(x => x.Id == id);
+        if (c == null) return ApiResult.Fail("赊账记录不存在");
+
+        c.Phone = string.IsNullOrWhiteSpace(dto.Phone) ? null : dto.Phone!.Trim();
+        c.Remark = string.IsNullOrWhiteSpace(dto.Remark) ? null : dto.Remark!.Trim();
+
+        await _db.SaveChangesAsync();
+        _db.OperationLogs.Add(new OperationLog
+        {
+            UserId = _me.Id, UserName = _me.Username, IpAddress = _me.ClientIp, Module = "赊账管理",
+            Action = "修改赊账信息", Target = $"记录 #{id} 微信号 {c.WechatId}",
+        });
+        await _db.SaveChangesAsync();
+        return ApiResult.Ok();
     }
 }

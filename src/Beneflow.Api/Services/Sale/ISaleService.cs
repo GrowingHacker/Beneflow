@@ -11,6 +11,7 @@ public interface ISaleService
     Task<ApiResult<object>> CreateAsync(CreateSaleDto dto);
     Task<PagedResult<object>> ReturnListAsync(string? keyword, int page, int pageSize);
     Task<ApiResult<object>> CreateReturnAsync(CreateSaleReturnDto dto);
-    Task<object> CreditListAsync(string? wechatId, string? status, int page, int pageSize);
+    Task<object> CreditListAsync(string? keyword, string? status, string? dateFrom, string? dateTo, int page, int pageSize);
     Task<ApiResult> SettleAsync(int id, SettleCreditDto dto, string ip);
+    Task<ApiResult> UpdateCreditAsync(int id, UpdateCreditDto dto);
 }
