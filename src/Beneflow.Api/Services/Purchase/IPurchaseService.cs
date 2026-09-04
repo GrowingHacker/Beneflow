@@ -10,4 +10,6 @@ public interface IPurchaseService
     Task<ApiResult<object>> CreateAsync(CreatePurchaseDto dto);
     Task<PagedResult<object>> ReturnListAsync(string? keyword, int page, int pageSize);
     Task<ApiResult<object>> CreateReturnAsync(CreatePurchaseReturnDto dto);
+    /// <summary>进货单全量导出（按 keyword/dateFrom/dateTo 筛选，不分页）</summary>
+    Task<List<Dictionary<string, object?>>> ExportListAsync(string? keyword, string? dateFrom, string? dateTo);
 }

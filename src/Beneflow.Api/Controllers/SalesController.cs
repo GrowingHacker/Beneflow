@@ -25,4 +25,8 @@ public class SalesController : BaseApiController
     /// <summary>收银结算：扣库存、写流水，赊账生成欠款记录</summary>
     [HttpPost]
     public Task<ApiResult<object>> Create([FromBody] CreateSaleDto dto) => _svc.CreateAsync(dto);
+
+    /// <summary>作废销售单：仅翻转 IsVoided 标记，不影响库存；已作废订单不计入看板统计</summary>
+    [HttpPost("{id:int}/void")]
+    public Task<ApiResult> Void(int id) => _svc.VoidAsync(id);
 }

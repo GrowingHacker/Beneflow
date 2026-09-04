@@ -114,15 +114,35 @@ public class ExcelExportService : IExcelExportService
         bd.InsideBorderColor = XLColor.FromHtml("#C0C4CC");
 
         // ---- 列宽自适应：手动按 CJK 显示宽度计算（ClosedXML AdjustToContents 对中文按1字符算偏窄）----
+        // 先算出合计行各字段的值（与上方合计行逻辑一致），用于列宽参考
+        var summaryValues = new Dictionary<string, double>();
+        if (hasSummary)
+        {
+            foreach (var f in report.SummaryFields) summaryValues[f] = 0;
+            foreach (var row in report.Rows)
+                foreach (var f in report.SummaryFields)
+                    if (row.TryGetValue(f, out var v) && v != null && double.TryParse(v.ToString(), out var d))
+                        summaryValues[f] += d;
+        }
+
         for (var c = 0; c < cols; c++)
         {
-            var field = report.Columns[c].Field;
-            double maxW = DisplayWidth(report.Columns[c].Title);
+            var col = report.Columns[c];
+            double maxW = DisplayWidth(col.Title);
             foreach (var row in report.Rows)
-                if (row.TryGetValue(field, out var v) && v != null)
+                if (row.TryGetValue(col.Field, out var v) && v != null)
                     maxW = Math.Max(maxW, DisplayWidth(v.ToString()));
-            if (hasSummary && report.Columns[c].IsLabel)
-                maxW = Math.Max(maxW, DisplayWidth(report.SummaryLabel ?? ""));
+            // 合计行：标签列取 SummaryLabel，金额列取格式化后的合计值
+            if (hasSummary)
+            {
+                if (col.IsLabel)
+                    maxW = Math.Max(maxW, DisplayWidth(report.SummaryLabel ?? ""));
+                else if (summaryValues.TryGetValue(col.Field, out var sumVal))
+                {
+                    var fmt = col.Type == ExcelColumnType.Money ? "¥#,##0.00" : "#,##0";
+                    maxW = Math.Max(maxW, DisplayWidth(sumVal.ToString(fmt)));
+                }
+            }
             ws.Column(c + 1).Width = Math.Clamp(maxW + 2, 8, 60);
         }
         ws.SheetView.FreezeRows(2);

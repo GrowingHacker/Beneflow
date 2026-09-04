@@ -9,6 +9,8 @@ public interface ISaleService
     Task<ApiResult<object>> GetDetailAsync(int id);
     Task<ApiResult<object>> GetDetailByOrderNoAsync(string orderNo);
     Task<ApiResult<object>> CreateAsync(CreateSaleDto dto);
+    /// <summary>作废销售单：仅翻转 IsVoided 标记，不影响库存；已作废订单不计入看板统计</summary>
+    Task<ApiResult> VoidAsync(int id);
     Task<PagedResult<object>> ReturnListAsync(string? keyword, int page, int pageSize);
     Task<ApiResult<object>> CreateReturnAsync(CreateSaleReturnDto dto);
     Task<object> CreditListAsync(string? keyword, string? status, string? dateFrom, string? dateTo, int page, int pageSize);

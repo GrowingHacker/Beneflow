@@ -19,9 +19,30 @@ public class ExportController : BaseApiController
     private readonly IStockService _stocks;
     private readonly ISaleService _sales;
     private readonly IReportService _reports;
+    private readonly IPurchaseService _purchases;
 
-    public ExportController(IExcelExportService excel, IProductService products, IStockService stocks, ISaleService sales, IReportService reports)
-    { _excel = excel; _products = products; _stocks = stocks; _sales = sales; _reports = reports; }
+    public ExportController(IExcelExportService excel, IProductService products, IStockService stocks, ISaleService sales, IReportService reports, IPurchaseService purchases)
+    { _excel = excel; _products = products; _stocks = stocks; _sales = sales; _reports = reports; _purchases = purchases; }
+
+    // ---- 采购进货单列表 ----
+    [HttpGet("purchases")]
+    public async Task<IActionResult> Purchases([FromQuery] string? keyword, [FromQuery] string? dateFrom,
+        [FromQuery] string? dateTo, [FromQuery] string? format)
+    {
+        var rows = await _purchases.ExportListAsync(keyword, dateFrom, dateTo);
+        return Output(new ExcelReport
+        {
+            SheetName = "采购进货单", Title = "采购进货单列表", FileName = "采购进货单列表.xlsx",
+            Columns = new()
+            {
+                f("orderNo","单号"), f("supplierName","供应商"),
+                n("itemCount","种类数"), n("totalQty","总数量"), m("totalAmount","总金额"),
+                f("remark","备注"), dt("createdAt","时间"), f("createdByName","操作人"),
+            },
+            Rows = rows, SummaryLabel = "合计",
+            SummaryFields = { "totalAmount" },
+        }, format);
+    }
 
     // ---- 销售单列表 ----
     [HttpGet("sales")]

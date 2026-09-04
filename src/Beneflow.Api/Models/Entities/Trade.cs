@@ -79,6 +79,8 @@ public class SaleOrder
     [System.ComponentModel.DataAnnotations.StringLength(50)]
     public string? WechatId { get; set; }
     public string? Remark { get; set; }
+    /// <summary>作废标记：true 表示该订单已作废（不入销售额/订单数/毛利统计）</summary>
+    public bool IsVoided { get; set; }
     public int CreatedBy { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.Now;
 }

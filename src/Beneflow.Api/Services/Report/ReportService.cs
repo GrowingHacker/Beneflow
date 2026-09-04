@@ -235,9 +235,9 @@ public class ReportService : IReportService
         var tomorrow = today.AddDays(1);
         var monthStart = new DateTime(today.Year, today.Month, 1);
 
-        // 今日
+        // 今日（已作废订单不计入销售额/订单数/客单价/毛利）
         var todayOrders = await _db.SaleOrders.AsNoTracking()
-            .Where(o => o.CreatedAt >= today && o.CreatedAt < tomorrow).ToListAsync();
+            .Where(o => !o.IsVoided && o.CreatedAt >= today && o.CreatedAt < tomorrow).ToListAsync();
         var todayIds = todayOrders.Select(o => o.Id).ToList();
         var todayDetails = await _db.SaleOrderDetails.AsNoTracking()
             .Where(d => todayIds.Contains(d.OrderId)).ToListAsync();
@@ -246,7 +246,7 @@ public class ReportService : IReportService
 
         // 本月
         var monthOrders = await _db.SaleOrders.AsNoTracking()
-            .Where(o => o.CreatedAt >= monthStart && o.CreatedAt < tomorrow)
+            .Where(o => !o.IsVoided && o.CreatedAt >= monthStart && o.CreatedAt < tomorrow)
             .Select(o => new { o.Id, o.PayAmount, o.DiscountAmount }).ToListAsync();
         var monthIds = monthOrders.Select(o => o.Id).ToList();
         var monthCost = await _db.SaleOrderDetails.AsNoTracking()
@@ -265,7 +265,7 @@ public class ReportService : IReportService
         // 趋势 + Top5
         var trendStart = today.AddDays(-6);
         var trendOrders = await _db.SaleOrders.AsNoTracking()
-            .Where(o => o.CreatedAt >= trendStart && o.CreatedAt < tomorrow)
+            .Where(o => !o.IsVoided && o.CreatedAt >= trendStart && o.CreatedAt < tomorrow)
             .Select(o => new { o.CreatedAt, o.PayAmount }).ToListAsync();
         var trend = Enumerable.Range(0, 7).Select(i =>
         {
@@ -282,7 +282,7 @@ public class ReportService : IReportService
         var top5 = await (
             from d in _db.SaleOrderDetails.AsNoTracking()
             join o in _db.SaleOrders on d.OrderId equals o.Id
-            where o.CreatedAt >= monthTopStart
+            where !o.IsVoided && o.CreatedAt >= monthTopStart
             group d by d.ProductName into g
             orderby g.Sum(x => x.SubTotal) descending
             select new { name = g.Key, qty = g.Sum(x => x.Quantity), amount = Math.Round(g.Sum(x => x.SubTotal), 2) }

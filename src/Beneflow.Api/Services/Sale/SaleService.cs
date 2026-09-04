@@ -46,17 +46,27 @@ public class SaleService : ISaleService
             .Select(g => new { OrderId = g.Key, Qty = g.Sum(x => x.Quantity), Ret = g.Sum(x => x.ReturnedQuantity) })
             .ToDictionaryAsync(x => x.OrderId, x => x);
 
+        // 赊账订单的欠款结清状态（按当前页订单聚合）
+        var creditAgg = await _db.CreditSales.AsNoTracking()
+            .Where(c => ids.Contains(c.SaleOrderId))
+            .Select(c => new { c.SaleOrderId, c.Status })
+            .ToDictionaryAsync(x => x.SaleOrderId, x => x.Status);
+
         var list = rows.Select(r =>
         {
             retAgg.TryGetValue(r.o.Id, out var agg);
+            bool? settled = null;
+            if (r.o.IsCredit && creditAgg.TryGetValue(r.o.Id, out var st)) settled = st;
             return (object)new
             {
                 id = r.o.Id, orderNo = r.o.OrderNo,
                 totalAmount = r.o.TotalAmount, discountAmount = r.o.DiscountAmount,
                 payAmount = r.o.PayAmount, payMethod = r.o.PayMethod,
                 cashAmount = r.o.CashAmount, changeAmount = r.o.ChangeAmount,
-                status = StatusText(agg?.Qty ?? 0, agg?.Ret ?? 0),
-                isCredit = r.o.IsCredit, wechatId = r.o.WechatId,
+                status = StatusText(r.o.IsVoided, agg?.Qty ?? 0, agg?.Ret ?? 0),
+                isCredit = r.o.IsCredit,
+                creditSettled = settled,
+                wechatId = r.o.WechatId,
                 createdAt = r.o.CreatedAt.ToString("yyyy-MM-dd HH:mm"),
                 createdByName = r.UserName,
             };
@@ -89,9 +99,16 @@ public class SaleService : ISaleService
             .Select(g => new { OrderId = g.Key, Qty = g.Sum(x => x.Quantity), Ret = g.Sum(x => x.ReturnedQuantity) })
             .ToDictionaryAsync(x => x.OrderId, x => x);
 
+        var creditAgg = await _db.CreditSales.AsNoTracking()
+            .Where(c => ids.Contains(c.SaleOrderId))
+            .Select(c => new { c.SaleOrderId, c.Status })
+            .ToDictionaryAsync(x => x.SaleOrderId, x => x.Status);
+
         return rows.Select(r =>
         {
             retAgg.TryGetValue(r.o.Id, out var agg);
+            bool? settled = null;
+            if (r.o.IsCredit && creditAgg.TryGetValue(r.o.Id, out var st)) settled = st;
             return new Dictionary<string, object?>
             {
                 ["orderNo"] = r.o.OrderNo,
@@ -101,8 +118,9 @@ public class SaleService : ISaleService
                 ["payMethod"] = r.o.PayMethod,
                 ["cashAmount"] = r.o.CashAmount,
                 ["changeAmount"] = r.o.ChangeAmount,
-                ["status"] = StatusText(agg?.Qty ?? 0, agg?.Ret ?? 0),
+                ["status"] = StatusText(r.o.IsVoided, agg?.Qty ?? 0, agg?.Ret ?? 0),
                 ["isCredit"] = r.o.IsCredit ? "赊账" : "",
+                ["creditSettled"] = settled switch { true => "已结", false => "欠", _ => "" },
                 ["wechatId"] = r.o.WechatId ?? "",
                 ["createdAt"] = r.o.CreatedAt.ToString("yyyy-MM-dd HH:mm"),
                 ["createdByName"] = r.UserName,
@@ -135,22 +153,28 @@ public class SaleService : ISaleService
                 qty = d.Quantity, unitPrice = d.UnitPrice,
                 returnedQty = d.ReturnedQuantity, subTotal = d.SubTotal,
             }).ToListAsync();
+        bool? settled = null;
+        if (o.IsCredit)
+        {
+            var cs = await _db.CreditSales.AsNoTracking().Where(c => c.SaleOrderId == o.Id).Select(c => (bool?)c.Status).FirstOrDefaultAsync();
+            if (cs.HasValue) settled = cs;
+        }
         return new
         {
             id = o.Id, orderNo = o.OrderNo,
             totalAmount = o.TotalAmount, discountAmount = o.DiscountAmount,
             payAmount = o.PayAmount, payMethod = o.PayMethod,
             cashAmount = o.CashAmount, changeAmount = o.ChangeAmount,
-            status = StatusText(details.Sum(d => d.qty), details.Sum(d => d.returnedQty)),
-            isCredit = o.IsCredit, wechatId = o.WechatId,
+            status = StatusText(o.IsVoided, details.Sum(d => d.qty), details.Sum(d => d.returnedQty)),
+            isCredit = o.IsCredit, creditSettled = settled, wechatId = o.WechatId,
             createdAt = o.CreatedAt.ToString("yyyy-MM-dd HH:mm"), createdByName = userName ?? "",
             items = details,
         };
     }
 
-    /// <summary>由明细退货数量推导销售单状态：未退=已完成 / 全退=已退货 / 部分退=部分退货</summary>
-    private static string StatusText(decimal qty, decimal returned) =>
-        returned <= 0 ? "已完成" : returned >= qty ? "已退货" : "部分退货";
+    /// <summary>由 IsVoided 优先判断作废，否则按明细退货数量推导：未退=已完成 / 全退=已退货 / 部分退=部分退货</summary>
+    private static string StatusText(bool isVoided, decimal qty, decimal returned) =>
+        isVoided ? "已作废" : returned <= 0 ? "已完成" : returned >= qty ? "已退货" : "部分退货";
 
     /// <summary>
     /// 收银结算：校验库存 → 扣库存（快照成本价）→ 写流水；赊账同时生成 CreditSale 欠款记录。
@@ -258,6 +282,23 @@ public class SaleService : ISaleService
             await tx.RollbackAsync();
             throw new InvalidOperationException("创建销售单失败：" + ex.Message, ex);
         }
+    }
+
+    /// <summary>作废销售单：仅翻转 IsVoided 标记，不恢复库存、不删除已生成的流水；作废后该订单不计入看板统计</summary>
+    public async Task<ApiResult> VoidAsync(int id)
+    {
+        var o = await _db.SaleOrders.FirstOrDefaultAsync(x => x.Id == id);
+        if (o == null) return ApiResult.Fail("销售单不存在");
+        if (o.IsVoided) return ApiResult.Fail("该订单已作废，无需重复操作");
+
+        o.IsVoided = true;
+        _db.OperationLogs.Add(new OperationLog
+        {
+            UserId = _me.Id, UserName = _me.Username, IpAddress = _me.ClientIp,
+            Module = "销售管理", Action = "作废订单", Target = $"{o.OrderNo} 实收 ¥{o.PayAmount} ({o.PayMethod})",
+        });
+        await _db.SaveChangesAsync();
+        return ApiResult.Ok();
     }
 
     // ================= 销售退货 =================

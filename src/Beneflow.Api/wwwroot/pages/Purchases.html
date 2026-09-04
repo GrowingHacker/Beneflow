@@ -8,6 +8,8 @@
       <el-button type="primary" @click="search">查询</el-button>
       <div class="grow"></div>
       <el-button type="success" @click="openCreate">+ 新增进货单</el-button>
+      <el-button @click="exportCsv">导出 CSV</el-button>
+      <el-button type="success" @click="exportExcel">导出 Excel</el-button>
     </div>
     <div class="table-wrap">
       <el-table :data="list" v-loading="loading" border size="small">
@@ -122,9 +124,26 @@ function pageSetup(deps) {
   }
   function viewDetail(row) { detail.value = row; detailDialog.value = true; }
 
+  async function exportCsv() {
+    const params = { keyword: keyword.value, format: 'csv' };
+    const { from, to } = common.normalizeDatePair(dateFrom.value, dateTo.value);
+    if (from) params.dateFrom = from;
+    if (to) params.dateTo = to;
+    const ok = await common.downloadExcel('/export/purchases', params, '采购进货单列表.csv');
+    if (ok) toast('已导出', 'success');
+  }
+  async function exportExcel() {
+    const params = { keyword: keyword.value };
+    const { from, to } = common.normalizeDatePair(dateFrom.value, dateTo.value);
+    if (from) params.dateFrom = from;
+    if (to) params.dateTo = to;
+    const ok = await common.downloadExcel('/export/purchases', params, '采购进货单列表.xlsx');
+    if (ok) toast('已导出', 'success');
+  }
+
   onMounted(load);
   return { list, loading, keyword, dateFrom, dateTo, page, pageSize, total, load, search,
     suppliers, createDialog, submitting, form, pickKw, pickList, detailDialog, detail,
-    onOpen, openCreate, searchPick, addPick, submit, viewDetail, common, toast };
+    onOpen, openCreate, searchPick, addPick, submit, viewDetail, exportCsv, exportExcel, common, toast };
 }
 </script>

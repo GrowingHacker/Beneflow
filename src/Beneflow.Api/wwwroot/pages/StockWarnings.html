@@ -7,9 +7,9 @@
     <div class="toolbar">
       <span style="font-weight:600;">库存预警清单</span>
       <div class="grow"></div>
+      <el-button type="primary" @click="goPage(6)">前往进货</el-button>
       <el-button @click="exportList">导出 CSV</el-button>
       <el-button type="success" @click="exportExcel">导出 Excel</el-button>
-      <el-button type="primary" @click="goPage(6)">前往进货</el-button>
     </div>
     <div class="table-wrap">
       <el-table :data="all" v-loading="loading" border size="small">
