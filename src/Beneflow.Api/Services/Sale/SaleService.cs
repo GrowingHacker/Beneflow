@@ -64,6 +64,52 @@ public class SaleService : ISaleService
         return new PagedResult<object> { List = list, Total = total, Page = page, PageSize = pageSize };
     }
 
+    /// <summary>销售单全量导出（按 keyword/dateFrom/dateTo/payMethod 筛选，不分页）</summary>
+    public async Task<List<Dictionary<string, object?>>> ExportListAsync(string? keyword, string? dateFrom, string? dateTo, string? payMethod)
+    {
+        var q =
+            from o in _db.SaleOrders.AsNoTracking()
+            join u in _db.Users on o.CreatedBy equals u.Id
+            where string.IsNullOrEmpty(keyword)
+                  || o.OrderNo.Contains(keyword) || (o.WechatId != null && o.WechatId.Contains(keyword))
+            select new { o, UserName = u.Name };
+
+        if (!string.IsNullOrEmpty(dateFrom) && DateTime.TryParse(dateFrom, out var df))
+            q = q.Where(x => x.o.CreatedAt >= df);
+        if (!string.IsNullOrEmpty(dateTo) && DateTime.TryParse(dateTo, out var dt))
+            q = q.Where(x => x.o.CreatedAt < dt.AddDays(1));
+        if (!string.IsNullOrEmpty(payMethod))
+            q = q.Where(x => x.o.PayMethod == payMethod);
+
+        var rows = await q.OrderByDescending(x => x.o.Id).ToListAsync();
+        var ids = rows.Select(r => r.o.Id).ToList();
+        var retAgg = await _db.SaleOrderDetails.AsNoTracking()
+            .Where(d => ids.Contains(d.OrderId))
+            .GroupBy(d => d.OrderId)
+            .Select(g => new { OrderId = g.Key, Qty = g.Sum(x => x.Quantity), Ret = g.Sum(x => x.ReturnedQuantity) })
+            .ToDictionaryAsync(x => x.OrderId, x => x);
+
+        return rows.Select(r =>
+        {
+            retAgg.TryGetValue(r.o.Id, out var agg);
+            return new Dictionary<string, object?>
+            {
+                ["orderNo"] = r.o.OrderNo,
+                ["totalAmount"] = r.o.TotalAmount,
+                ["discountAmount"] = r.o.DiscountAmount,
+                ["payAmount"] = r.o.PayAmount,
+                ["payMethod"] = r.o.PayMethod,
+                ["cashAmount"] = r.o.CashAmount,
+                ["changeAmount"] = r.o.ChangeAmount,
+                ["status"] = StatusText(agg?.Qty ?? 0, agg?.Ret ?? 0),
+                ["isCredit"] = r.o.IsCredit ? "赊账" : "",
+                ["wechatId"] = r.o.WechatId ?? "",
+                ["createdAt"] = r.o.CreatedAt.ToString("yyyy-MM-dd HH:mm"),
+                ["createdByName"] = r.UserName,
+            };
+        }).ToList();
+    }
+
     public async Task<ApiResult<object>> GetDetailAsync(int id)
     {
         var order = await _db.SaleOrders.AsNoTracking().FirstOrDefaultAsync(o => o.Id == id);
@@ -428,6 +474,42 @@ public class SaleService : ISaleService
         };
 
         return new { list, stats, total, page, pageSize };
+    }
+
+    /// <summary>导出赊账记录全量（按 keyword/status/dateFrom/dateTo 筛选，不分页），返回行字典</summary>
+    public async Task<List<Dictionary<string, object?>>> ExportCreditAsync(string? keyword, string? status, string? dateFrom, string? dateTo)
+    {
+        bool? settled = status switch { "已结清" => true, "未结清" => false, _ => (bool?)null };
+
+        var filtered =
+            from c in _db.CreditSales.AsNoTracking()
+            join o in _db.SaleOrders on c.SaleOrderId equals o.Id
+            where string.IsNullOrEmpty(keyword)
+                  || c.WechatId.Contains(keyword)
+                  || (c.Phone != null && c.Phone.Contains(keyword))
+                  || (c.Remark != null && c.Remark.Contains(keyword))
+                  || o.OrderNo.Contains(keyword)
+            orderby c.Id descending
+            select new { c, saleOrderNo = o.OrderNo };
+        if (settled != null) filtered = filtered.Where(x => x.c.Status == settled);
+        if (!string.IsNullOrEmpty(dateFrom) && DateTime.TryParse(dateFrom, out var df))
+            filtered = filtered.Where(x => x.c.CreatedAt >= df);
+        if (!string.IsNullOrEmpty(dateTo) && DateTime.TryParse(dateTo, out var dt))
+            filtered = filtered.Where(x => x.c.CreatedAt < dt.AddDays(1));
+
+        var rows = await filtered.ToListAsync();
+        return rows.Select(r => new Dictionary<string, object?>
+        {
+            ["wechatId"] = r.c.WechatId,
+            ["phone"] = r.c.Phone,
+            ["saleOrderNo"] = r.saleOrderNo,
+            ["creditAmount"] = r.c.CreditAmount,
+            ["paidAmount"] = r.c.PaidAmount,
+            ["remainingAmount"] = r.c.RemainingAmount,
+            ["status"] = r.c.Status ? "已结清" : "未结清",
+            ["remark"] = r.c.Remark,
+            ["createdAt"] = r.c.CreatedAt.ToString("yyyy-MM-dd HH:mm"),
+        }).ToList();
     }
 
     public async Task<ApiResult> SettleAsync(int id, SettleCreditDto dto, string ip)

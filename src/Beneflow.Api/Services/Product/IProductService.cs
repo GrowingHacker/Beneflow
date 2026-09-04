@@ -8,6 +8,8 @@ namespace Beneflow.Api.Services;
 public interface IProductService
 {
     Task<PagedResult<object>> ListAsync(string? keyword, int page, int pageSize);
+    /// <summary>导出全量（按 keyword 筛选，不分页），返回行字典</summary>
+    Task<List<Dictionary<string, object?>>> ExportListAsync(string? keyword);
     Task<ApiResult<object?>> GetByBarcode(string barcode);
     Task<ApiResult<object>> CreateAsync(ProductUpsertDto dto);
     Task<ApiResult> UpdateAsync(int id, JsonElement body);

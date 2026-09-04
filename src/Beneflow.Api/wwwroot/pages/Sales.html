@@ -85,6 +85,8 @@
             <el-option label="支付宝" value="支付宝" /><el-option label="赊账" value="赊账" />
           </el-select>
           <el-button type="primary" @click="searchOrders">查询</el-button>
+          <el-button @click="exportOrdersCsv">导出 CSV</el-button>
+          <el-button type="success" @click="exportOrdersExcel">导出 Excel</el-button>
         </div>
         <div class="table-wrap">
           <el-table :data="orders" v-loading="ordersLoading" border size="small">
@@ -305,6 +307,22 @@ function pageSetup(deps) {
     finally { ordersLoading.value = false; }
   }
   function searchOrders() { orderPage.value = 1; loadOrders(); }
+  async function exportOrdersCsv() {
+    const params = { keyword: orderKeyword.value, payMethod: payMethodFilter.value || '', format: 'csv' };
+    const { from, to } = common.normalizeDatePair(dateFrom.value, dateTo.value);
+    if (from) params.dateFrom = from;
+    if (to) params.dateTo = to;
+    const ok = await common.downloadExcel('/export/sales', params, '销售单列表.csv');
+    if (ok) toast('已导出','success');
+  }
+  async function exportOrdersExcel() {
+    const params = { keyword: orderKeyword.value, payMethod: payMethodFilter.value || '' };
+    const { from, to } = common.normalizeDatePair(dateFrom.value, dateTo.value);
+    if (from) params.dateFrom = from;
+    if (to) params.dateTo = to;
+    const ok = await common.downloadExcel('/export/sales', params, '销售单列表.xlsx');
+    if (ok) toast('已导出','success');
+  }
 
   onMounted(() => { focusScan(); loadOrders(); });
 
@@ -317,6 +335,7 @@ function pageSetup(deps) {
     payAmount, changeAmount, openSettle, recomputePay, onSettleClosed, confirmSettle,
     orders, ordersLoading, orderKeyword, dateFrom, dateTo, payMethodFilter,
     orderPage, orderPageSize, orderTotal, loadOrders, searchOrders,
+    exportOrdersCsv, exportOrdersExcel,
     common, toast
   };
 }

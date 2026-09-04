@@ -6,6 +6,8 @@ namespace Beneflow.Api.Services;
 public interface IStockService
 {
     Task<object> InventoryListAsync(string? keyword, string? status, int page, int pageSize);
+    /// <summary>导出实时库存全量（按 keyword/status 筛选，不分页）</summary>
+    Task<List<Dictionary<string, object?>>> ExportInventoryAsync(string? keyword, string? status);
     Task<PagedResult<object>> CheckListAsync(int page, int pageSize);
     Task<ApiResult<object>> CreateCheckAsync(CreateStockCheckDto dto);
     Task<ApiResult> ConfirmCheckAsync(int id);
@@ -13,4 +15,6 @@ public interface IStockService
     Task<ApiResult> MarkProcessedAsync(long[] ids);
     Task<List<object>> WarningsAsync();
     Task<PagedResult<object>> LogListAsync(string? keyword, string? changeType, int page, int pageSize);
+    /// <summary>导出库存流水全量（按 keyword/changeType 筛选，不分页）</summary>
+    Task<List<Dictionary<string, object?>>> ExportLogAsync(string? keyword, string? changeType);
 }

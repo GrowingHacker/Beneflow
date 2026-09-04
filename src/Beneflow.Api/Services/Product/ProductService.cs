@@ -64,6 +64,43 @@ public class ProductService : IProductService
         return new PagedResult<object> { List = list, Total = total, Page = page, PageSize = pageSize };
     }
 
+    /// <summary>导出全量（按 keyword 筛选，不分页）。字段与列表一致，供 Excel 渲染</summary>
+    public async Task<List<Dictionary<string, object?>>> ExportListAsync(string? keyword)
+    {
+        var rows = await _db.Products.AsNoTracking()
+            .Where(p => !p.IsDeleted &&
+                (string.IsNullOrEmpty(keyword) || p.Name.Contains(keyword) || p.Barcode.Contains(keyword)))
+            .Select(p => new
+            {
+                p.Id, p.Barcode, p.Name, p.CategoryId,
+                CategoryName = _db.Categories.Where(c => c.Id == p.CategoryId).Select(c => c.Name).FirstOrDefault(),
+                p.Unit, p.Spec, p.SalePrice, p.CostPrice,
+                p.StockQuantity, p.HasExpiry, p.Status,
+            })
+            .OrderByDescending(p => p.Id).ToListAsync();
+
+        var ids = rows.Select(r => r.Id).ToList();
+        var expMap = await _db.Batches.AsNoTracking()
+            .Where(b => !b.IsProcessed && ids.Contains(b.ProductId))
+            .GroupBy(b => b.ProductId)
+            .Select(g => new { Pid = g.Key, Min = g.Min(b => b.ExpireDate) })
+            .ToDictionaryAsync(x => x.Pid, x => x.Min);
+
+        return rows.Select(r =>
+        {
+            var dict = new Dictionary<string, object?>
+            {
+                ["barcode"] = r.Barcode, ["name"] = r.Name,
+                ["categoryName"] = r.CategoryName, ["unit"] = r.Unit, ["spec"] = r.Spec,
+                ["salePrice"] = r.SalePrice, ["costPrice"] = r.CostPrice,
+                ["stockQuantity"] = r.StockQuantity, ["status"] = r.Status ? "上架" : "下架",
+            };
+            if (r.HasExpiry && expMap.TryGetValue(r.Id, out var expire))
+                dict["expireDate"] = expire.ToString("yyyy-MM-dd");
+            return dict;
+        }).ToList();
+    }
+
     /// <summary>条码查询商品（收银 / 手机进货），字段与列表一致</summary>
     public async Task<ApiResult<object?>> GetByBarcode(string barcode)
     {

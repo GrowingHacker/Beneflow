@@ -54,6 +54,33 @@ window.common = {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   },
+  /**
+   * 调后端导出接口下载 .xlsx（自动带 JWT）。
+   * @param url 相对 /api/v1 的路径，如 '/export/credits'
+   * @param params 查询参数对象
+   * @param fileName 下载文件名
+   * 成功触发下载并返回 true；失败 toast 错误消息并返回 false。
+   */
+  downloadExcel: async function (url, params, fileName) {
+    try {
+      const blob = await window.api.get(url, { params: params || {}, responseType: 'blob' });
+      this.downloadBlob(blob, fileName);
+      return true;
+    } catch (e) {
+      // 服务端错误体本是 JSON，但 responseType=blob 拿到的是 Blob，需解析出 message
+      let msg = '导出失败';
+      try {
+        const blob = e && e.response && e.response.data;
+        if (blob instanceof Blob) {
+          const txt = await blob.text();
+          try { const j = JSON.parse(txt); if (j && j.message) msg = j.message; else msg = txt || msg; }
+          catch (_) { msg = txt || msg; }
+        } else if (e && e.message) { msg = e.message; }
+      } catch (_) {}
+      (window.ElementPlus || {}).ElMessage && (window.ElementPlus.ElMessage)({ message: msg, type: 'error' });
+      return false;
+    }
+  },
   // 权限判断：permissions 含 "*" 视为全部权限
   hasPerm: function (permissions, code) {
     if (!permissions || !permissions.length) return false;

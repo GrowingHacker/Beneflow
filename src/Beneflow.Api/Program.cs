@@ -75,6 +75,7 @@ builder.Services.AddScoped<IMenuService, MenuService>();
 builder.Services.AddScoped<ILogService, LogService>();
 builder.Services.AddScoped<ISettingService, SettingService>();
 builder.Services.AddScoped<IBarcodeService, BarcodeService>();
+builder.Services.AddScoped<IExcelExportService, ExcelExportService>();   // ClosedXML 美观 Excel 导出
 builder.Services.AddScoped<ISupplierService, SupplierService>();
 builder.Services.AddHttpClient();  // BarcodeService 调第三方 API 用
 builder.Services.AddHostedService<BackupHostedService>();   // 每日 02:00 自动全量备份（含启动补备）

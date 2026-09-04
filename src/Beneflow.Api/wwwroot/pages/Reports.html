@@ -6,7 +6,8 @@
         <div class="toolbar">
           <el-date-picker v-model="dailyDate" type="date" value-format="YYYY-MM-DD" />
           <el-button type="primary" @click="loadDaily">查询</el-button>
-          <el-button @click="exportDaily">导出</el-button>
+          <el-button @click="exportDaily">导出 CSV</el-button>
+          <el-button type="success" @click="exportExcelDaily">导出 Excel</el-button>
         </div>
         <div class="stat-row">
           <div class="stat-card"><div class="label">销售额</div><div class="value">{{ common.money(daily?.summary?.sales) }}</div></div>
@@ -67,7 +68,8 @@
           <span style="margin:0 4px;color:#999;">至</span>
           <el-date-picker v-model="supplierTo" type="date" value-format="YYYY-MM-DD" placeholder="结束日期" clearable style="width:150px;" />
           <el-button type="primary" @click="loadStatement">生成对账单</el-button>
-          <el-button @click="exportStatement">导出</el-button>
+          <el-button @click="exportStatement">导出 CSV</el-button>
+          <el-button type="success" @click="exportExcelStatement">导出 Excel</el-button>
         </div>
         <div class="table-wrap">
           <el-table :data="statement?.items || []" border size="small">
@@ -120,12 +122,15 @@ function pageSetup(deps) {
       series: [{ name: '销售额', type: 'bar', data: daily.value.trend.map(t=>t.sales), itemStyle: { color: '#409eff' } }]
     });
   }
-  function exportDaily() {
-    if (!daily.value) return;
-    const header = ['商品','销量','金额']; const lines = [header.join(',')];
-    (daily.value.top5||[]).forEach(r => lines.push([r.name,r.qty,r.amount].map(v=>'"'+v+'"').join(',')));
-    common.downloadBlob(new Blob(['\ufeff'+lines.join('\n')], {type:'text/csv;charset=utf-8'}), '日销售Top5.csv');
-    toast('已导出','success');
+  async function exportDaily() {
+    if (!daily.value) { toast('请先查询日报','warning'); return; }
+    const ok = await common.downloadExcel('/export/daily-sales', { date: dailyDate.value, format: 'csv' }, '日销售Top5.csv');
+    if (ok) toast('已导出','success');
+  }
+  async function exportExcelDaily() {
+    if (!daily.value) { toast('请先查询日报','warning'); return; }
+    const ok = await common.downloadExcel('/export/daily-sales', { date: dailyDate.value }, '日销售Top5.xlsx');
+    if (ok) toast('已导出','success');
   }
 
   // 月销售
@@ -174,16 +179,25 @@ function pageSetup(deps) {
     if (to) params.dateTo = to;
     try { statement.value = await api.get('/reports/supplier-statement', { params }); } catch(e){}
   }
-  function exportStatement() {
-    const s = statement.value;
-    if (!s || !(s.items||[]).length) { toast('暂无可导出的对账数据','warning'); return; }
+  async function exportStatement() {
+    if (!supplierId.value) { toast('请选择供应商','warning'); return; }
+    const params = { supplierId: supplierId.value, format: 'csv' };
+    if (supplierFrom.value) params.dateFrom = supplierFrom.value;
+    if (supplierTo.value) params.dateTo = supplierTo.value;
     const sup = suppliers.value.find(x => x.id === supplierId.value);
-    const lines = [['单号','时间','数量','金额'].join(',')];
-    s.items.forEach(r => lines.push([r.orderNo, r.createdAt, r.totalQty, r.totalAmount].map(v => '"'+v+'"').join(',')));
-    lines.push(['合计','','','"'+s.total+'"'].join(','));
     const fname = '对账单_' + (sup ? sup.name : '').replace(/[\\/:*?"<>|]/g, '') + '.csv';
-    common.downloadBlob(new Blob(['\ufeff'+lines.join('\n')], {type:'text/csv;charset=utf-8'}), fname);
-    toast('已导出','success');
+    const ok = await common.downloadExcel('/export/supplier-statement', params, fname);
+    if (ok) toast('已导出','success');
+  }
+  async function exportExcelStatement() {
+    if (!supplierId.value) { toast('请选择供应商','warning'); return; }
+    const params = { supplierId: supplierId.value };
+    if (supplierFrom.value) params.dateFrom = supplierFrom.value;
+    if (supplierTo.value) params.dateTo = supplierTo.value;
+    const sup = suppliers.value.find(x => x.id === supplierId.value);
+    const fname = '对账单_' + (sup ? sup.name : '').replace(/[\\/:*?"<>|]/g, '') + '.xlsx';
+    const ok = await common.downloadExcel('/export/supplier-statement', params, fname);
+    if (ok) toast('已导出','success');
   }
 
   // 赊账汇总
@@ -204,10 +218,10 @@ function pageSetup(deps) {
   });
 
   loadDaily(); loadSuppliers(); loadCredit();
-  return { tab, dailyDate, daily, dailyEl, loadDaily, exportDaily,
+  return { tab, dailyDate, daily, dailyEl, loadDaily, exportDaily, exportExcelDaily,
     monthVal, monthly, monthlyEl, loadMonthly,
     profitFrom, profitTo, profit, profitRate, profitEl, loadProfit,
-    suppliers, supplierId, supplierFrom, supplierTo, statement, loadStatement, exportStatement,
+    suppliers, supplierId, supplierFrom, supplierTo, statement, loadStatement, exportStatement, exportExcelStatement,
     creditFrom, creditTo, creditSum, loadCredit, common, toast, goPage };
 }
 </script>

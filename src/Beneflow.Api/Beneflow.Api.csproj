@@ -25,6 +25,8 @@
     <!-- Windows Service 托管：让 dotnet 进程可作为系统服务运行（开机自启 + 崩溃自恢复）。
          非 Windows 平台此包不会生效，无需条件编译。 -->
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="8.0.0" />
+    <!-- Excel 导出：ClosedXML 基于 OpenXML 封装，API 简洁，MIT 协议可商用 -->
+    <PackageReference Include="ClosedXML" Version="0.104.2" />
   </ItemGroup>
 
 </Project>

@@ -97,6 +97,55 @@ public class StockService : IStockService
         return new { list, total, page, pageSize };
     }
 
+    /// <summary>导出实时库存全量（按 keyword/status 筛选，不分页），返回行字典</summary>
+    public async Task<List<Dictionary<string, object?>>> ExportInventoryAsync(string? keyword, string? status)
+    {
+        var expiryDays = await ExpiryDaysAsync();
+        var q =
+            from p in _db.Products.AsNoTracking()
+            join c in _db.Categories on p.CategoryId equals c.Id
+            where !p.IsDeleted &&
+                  (string.IsNullOrEmpty(keyword) || p.Name.Contains(keyword) || p.Barcode.Contains(keyword))
+            orderby p.Id
+            select new
+            {
+                p.Id, p.Barcode, p.Name, CategoryName = c.Name,
+                p.Unit, p.SalePrice, p.CostPrice,
+                p.StockQuantity, p.SafetyStock, p.HasExpiry,
+            };
+
+        var all = await q.ToListAsync();
+        var ids = all.Select(x => x.Id).ToList();
+        var minLeft = await (
+            from b in _db.Batches.AsNoTracking()
+            where !b.IsProcessed && ids.Contains(b.ProductId)
+            group b by b.ProductId into g
+            select new { Pid = g.Key, Min = g.Min(b => b.ExpireDate) }).ToDictionaryAsync(x => x.Pid, x => x.Min);
+
+        var rows = all.Select(p =>
+        {
+            int? left = null; string st; DateTime? expire = null;
+            if (p.HasExpiry && minLeft.TryGetValue(p.Id, out var d))
+            { left = (int)Math.Floor((d - DateTime.Today).TotalDays); expire = d; }
+            if (p.StockQuantity <= 0) st = "缺货";
+            else if (p.StockQuantity <= p.SafetyStock) st = "预警";
+            else if (left.HasValue && left.Value < 0) st = "过期";
+            else if (left.HasValue && left.Value <= expiryDays) st = "临期";
+            else st = "正常";
+            return new Dictionary<string, object?>
+            {
+                ["barcode"] = p.Barcode, ["name"] = p.Name, ["categoryName"] = p.CategoryName,
+                ["unit"] = p.Unit, ["costPrice"] = p.CostPrice, ["salePrice"] = p.SalePrice,
+                ["stockQuantity"] = p.StockQuantity, ["safetyStock"] = p.SafetyStock,
+                ["stockAmount"] = Math.Round(p.StockQuantity * p.CostPrice, 2),
+                ["expireDate"] = expire?.ToString("yyyy-MM-dd"),
+                ["status"] = st,
+            };
+        });
+        var filtered = string.IsNullOrEmpty(status) ? rows : rows.Where(r => (string)r["status"]! == status);
+        return filtered.ToList();
+    }
+
     // ================= 盘点单 =================
 
     public async Task<PagedResult<object>> CheckListAsync(int page, int pageSize)
@@ -335,5 +384,27 @@ public class StockService : IStockService
             createdByName = r.UserName,
         }).ToList();
         return new PagedResult<object> { List = list, Total = total, Page = page, PageSize = pageSize };
+    }
+
+    /// <summary>导出库存流水全量（按 keyword/changeType 筛选，不分页），返回行字典</summary>
+    public async Task<List<Dictionary<string, object?>>> ExportLogAsync(string? keyword, string? changeType)
+    {
+        var q =
+            from l in _db.StockLogs.AsNoTracking()
+            join p in _db.Products on l.ProductId equals p.Id
+            join u in _db.Users on l.CreatedBy equals u.Id
+            where string.IsNullOrEmpty(keyword) || p.Name.Contains(keyword) ||
+                  p.Barcode.Contains(keyword) || l.RefNo.Contains(keyword)
+            select new { l, p.Name, p.Barcode, UserName = u.Name };
+        if (!string.IsNullOrEmpty(changeType)) q = q.Where(x => x.l.ChangeType == changeType);
+        var rows = await q.OrderByDescending(x => x.l.Id).ToListAsync();
+        return rows.Select(r => new Dictionary<string, object?>
+        {
+            ["createdAt"] = r.l.CreatedAt.ToString("yyyy-MM-dd HH:mm"),
+            ["productName"] = r.Name, ["barcode"] = r.Barcode,
+            ["changeType"] = r.l.ChangeType, ["changeQty"] = r.l.ChangeQty,
+            ["beforeQty"] = r.l.BeforeQty, ["afterQty"] = r.l.AfterQty,
+            ["refNo"] = r.l.RefNo, ["createdByName"] = r.UserName,
+        }).ToList();
     }
 }

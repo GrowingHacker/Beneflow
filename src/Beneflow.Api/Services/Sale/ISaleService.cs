@@ -12,6 +12,9 @@ public interface ISaleService
     Task<PagedResult<object>> ReturnListAsync(string? keyword, int page, int pageSize);
     Task<ApiResult<object>> CreateReturnAsync(CreateSaleReturnDto dto);
     Task<object> CreditListAsync(string? keyword, string? status, string? dateFrom, string? dateTo, int page, int pageSize);
+    /// <summary>导出赊账记录全量（按 keyword/status/dateFrom/dateTo 筛选，不分页）</summary>
+    Task<List<Dictionary<string, object?>>> ExportCreditAsync(string? keyword, string? status, string? dateFrom, string? dateTo);
+    Task<List<Dictionary<string, object?>>> ExportListAsync(string? keyword, string? dateFrom, string? dateTo, string? payMethod);
     Task<ApiResult> SettleAsync(int id, SettleCreditDto dto, string ip);
     Task<ApiResult> UpdateCreditAsync(int id, UpdateCreditDto dto);
 }

@@ -14,7 +14,8 @@
         <el-option label="未结清" value="未结清" /><el-option label="已结清" value="已结清" />
       </el-select>
       <el-button type="primary" @click="search">查询</el-button>
-      <el-button @click="exportList">导出</el-button>
+      <el-button @click="exportList">导出 CSV</el-button>
+      <el-button type="success" @click="exportExcel">导出 Excel</el-button>
     </div>
     <div class="table-wrap">
       <el-table :data="list" v-loading="loading" border size="small">
@@ -126,13 +127,20 @@ function pageSetup(deps) {
     try { await api.post('/credits/' + current.value.id + '/settle', { payMethod: payMethod.value }); toast('已结清','success'); settleDialog.value = false; load(); } catch(e){}
     finally { settling.value = false; }
   }
-  function exportList() {
-    if (!list.value.length) { toast('无数据','warning'); return; }
-    const header = ['微信号','手机号','单号','欠款','已还','剩余','状态','备注','赊账时间'];
-    const lines = [header.join(',')];
-    list.value.forEach(r => lines.push([r.wechatId,r.phone,r.saleOrderNo,r.creditAmount,r.paidAmount,r.remainingAmount,r.status,r.remark,r.createdAt].map(v=>'"'+(v==null?'':v)+'"').join(',')));
-    common.downloadBlob(new Blob(['\ufeff'+lines.join('\n')], {type:'text/csv;charset=utf-8'}), '赊账记录.csv');
-    toast('已导出','success');
+  async function exportList() {
+    const params = { keyword: keyword.value, status: statusFilter.value, format: 'csv' };
+    if (dateFrom.value) params.dateFrom = dateFrom.value;
+    if (dateTo.value) params.dateTo = dateTo.value;
+    const ok = await common.downloadExcel('/export/credits', params, '赊账记录.csv');
+    if (ok) toast('已导出','success');
+  }
+
+  async function exportExcel() {
+    const params = { keyword: keyword.value, status: statusFilter.value };
+    if (dateFrom.value) params.dateFrom = dateFrom.value;
+    if (dateTo.value) params.dateTo = dateTo.value;
+    const ok = await common.downloadExcel('/export/credits', params, '赊账记录.xlsx');
+    if (ok) toast('已导出','success');
   }
 
   onMounted(load);
@@ -140,6 +148,6 @@ function pageSetup(deps) {
     load, search,
     settleDialog, current, payMethod, settling, openSettle, confirmSettle,
     editDialog, editRow, editSaving, editForm, openEdit, confirmEdit,
-    exportList, common, toast };
+    exportList, exportExcel, common, toast };
 }
 </script>

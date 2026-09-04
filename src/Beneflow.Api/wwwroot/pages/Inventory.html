@@ -7,7 +7,8 @@
         <el-option label="缺货" value="缺货" /><el-option label="临期" value="临期" /><el-option label="过期" value="过期" />
       </el-select>
       <el-button type="primary" @click="search">查询</el-button>
-      <el-button @click="exportCsv">导出</el-button>
+      <el-button @click="exportCsv">导出 CSV</el-button>
+      <el-button type="success" @click="exportExcel">导出 Excel</el-button>
     </div>
     <div class="table-wrap">
       <el-table :data="filtered" v-loading="loading" border stripe size="small">
@@ -58,17 +59,18 @@ function pageSetup(deps) {
   function statusType(row) { const s = statusText(row); return s==='缺货'?'danger':s==='预警'?'warning':s==='临期'?'warning':s==='过期'?'danger':'success'; }
   function expireClass(row) { if (!row.expireDate) return 'muted'; const d=(new Date(row.expireDate)-new Date())/86400000; return d<0?'danger-text':d<7?'danger-text':d<30?'warn-text':'muted'; }
 
-  function exportCsv() {
-    if (!filtered.value.length) { toast('无可导出数据', 'warning'); return; }
-    const header = ['条码','名称','分类','成本','售价','库存','安全库存','有效期','状态'];
-    const lines = [header.join(',')];
-    filtered.value.forEach(r => lines.push([r.barcode,r.name,r.categoryName,r.costPrice,r.salePrice,r.stockQuantity,r.safetyStock,r.expireDate||'',statusText(r)].map(v=>'"'+(v==null?'':v)+'"').join(',')));
-    common.downloadBlob(new Blob(['\ufeff'+lines.join('\n')], {type:'text/csv;charset=utf-8'}), '实时库存.csv');
-    toast('已导出','success');
+  async function exportCsv() {
+    const ok = await common.downloadExcel('/export/inventory', { keyword: keyword.value, status: statusFilter.value, format: 'csv' }, '实时库存.csv');
+    if (ok) toast('已导出','success');
+  }
+
+  async function exportExcel() {
+    const ok = await common.downloadExcel('/export/inventory', { keyword: keyword.value, status: statusFilter.value }, '实时库存.xlsx');
+    if (ok) toast('已导出','success');
   }
 
   onMounted(load);
   return { list, loading, keyword, statusFilter, filtered, page, pageSize, total,
-    load, search, statusText, statusType, expireClass, exportCsv, common, toast };
+    load, search, statusText, statusType, expireClass, exportCsv, exportExcel, common, toast };
 }
 </script>

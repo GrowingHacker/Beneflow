@@ -7,6 +7,7 @@
       <div class="grow"></div>
       <el-button type="success" @click="openCreate">+ 新增商品</el-button>
       <el-button @click="exportCsv">导出 CSV</el-button>
+      <el-button type="success" @click="exportExcel">导出 Excel</el-button>
     </div>
 
     <div class="table-wrap">
@@ -233,20 +234,18 @@ function pageSetup(deps) {
     return 'success';
   }
 
-  function exportCsv() {
-    const rows = list.value;
-    if (!rows.length) { toast('没有可导出的数据', 'warning'); return; }
-    const header = ['条码','名称','分类','单位','规格','售价','成本','库存','有效期'];
-    const lines = [header.join(',')];
-    rows.forEach(function (r) {
-      lines.push([r.barcode, r.name, r.categoryName, r.unit, r.spec, r.salePrice, r.costPrice, r.stockQuantity, r.expireDate || ''].map(function (v) { return '"' + (v == null ? '' : v) + '"'; }).join(','));
-    });
-    common.downloadBlob(new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8' }), '商品列表.csv');
-    toast('已导出', 'success');
+  async function exportCsv() {
+    const ok = await common.downloadExcel('/export/products', { keyword: keyword.value, format: 'csv' }, '商品列表.csv');
+    if (ok) toast('已导出', 'success');
+  }
+
+  async function exportExcel() {
+    const ok = await common.downloadExcel('/export/products', { keyword: keyword.value }, '商品列表.xlsx');
+    if (ok) toast('已导出', 'success');
   }
 
   onMounted(function () { load(); loadCats(); loadDicts(); });
   return { list, loading, keyword, page, pageSize, total, dialog, form, common, cats, unitOptions, specOptions,
-    load, search, reset, openCreate, openEdit, save, toggleStatus, remove, expireTag, exportCsv };
+    load, search, reset, openCreate, openEdit, save, toggleStatus, remove, expireTag, exportCsv, exportExcel };
 }
 </script>

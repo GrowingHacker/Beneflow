@@ -11,6 +11,7 @@
         <el-table-column label="用户名" prop="username" width="120" />
         <el-table-column label="姓名" prop="name" width="120" />
         <el-table-column label="手机号" prop="phone" width="140" />
+        <el-table-column label="备注" min-width="160" show-overflow-tooltip><template #default="{ row }"><span :class="{ muted: !row.remark }">{{ row.remark || '—' }}</span></template></el-table-column>
         <el-table-column label="角色" prop="role" width="120" />
         <el-table-column label="状态" width="90"><template #default="{ row }"><el-tag :type="row.status === '启用' ? 'success' : 'info'" size="small">{{ row.status }}</el-tag></template></el-table-column>
         <el-table-column label="创建时间" prop="createdAt" width="140" />

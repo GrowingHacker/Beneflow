@@ -2,8 +2,12 @@
   <div class="page-card">
     <div class="toolbar">
       <el-input v-model="keyword" placeholder="商品 / 关联单号" clearable style="width:220px;" @keyup.enter="search" />
+      <el-select v-model="changeType" placeholder="类型" clearable style="width:140px;" @change="search">
+        <el-option v-for="t in types" :key="t" :label="t" :value="t"></el-option>
+      </el-select>
       <el-button type="primary" @click="search">查询</el-button>
-      <el-button @click="exportCsv">导出</el-button>
+      <el-button @click="exportCsv">导出 CSV</el-button>
+      <el-button type="success" @click="exportExcel">导出 Excel</el-button>
     </div>
     <div class="table-wrap">
       <el-table :data="list" v-loading="loading" border size="small">
@@ -33,22 +37,32 @@ function pageSetup(deps) {
   const { api, common, toast } = deps;
   const list = ref([]); const loading = ref(false);
   const keyword = ref(''); const page = ref(1); const pageSize = ref(20); const total = ref(0);
+  const changeType = ref('');
+  const types = ['期初建账','采购入库','销售出库','盘点调整'];
 
   async function load() {
     loading.value = true;
-    try { const res = await api.get('/stock-logs', { params: { keyword: keyword.value, page: page.value, pageSize: pageSize.value } }); list.value = res.list||[]; total.value = res.total||0; } catch(e){}
+    try {
+      const params = { keyword: keyword.value, page: page.value, pageSize: pageSize.value };
+      if (changeType.value) params.changeType = changeType.value;
+      const res = await api.get('/stock-logs', { params }); list.value = res.list||[]; total.value = res.total||0;
+    } catch(e){}
     finally { loading.value = false; }
   }
   function search() { page.value = 1; load(); }
-  function exportCsv() {
-    if (!list.value.length) { toast('无可导出数据','warning'); return; }
-    const header = ['时间','商品','类型','变动数量','变动前','变动后','关联单号','操作人'];
-    const lines = [header.join(',')];
-    list.value.forEach(r => lines.push([r.createdAt,r.productName,r.changeType,r.changeQty,r.beforeQty,r.afterQty,r.refNo,r.createdByName].map(v=>'"'+(v==null?'':v)+'"').join(',')));
-    common.downloadBlob(new Blob(['\ufeff'+lines.join('\n')], {type:'text/csv;charset=utf-8'}), '库存流水.csv');
-    toast('已导出','success');
+  async function exportCsv() {
+    const params = { keyword: keyword.value, format: 'csv' };
+    if (changeType.value) params.changeType = changeType.value;
+    const ok = await common.downloadExcel('/export/stock-logs', params, '库存流水.csv');
+    if (ok) toast('已导出','success');
+  }
+  async function exportExcel() {
+    const params = { keyword: keyword.value };
+    if (changeType.value) params.changeType = changeType.value;
+    const ok = await common.downloadExcel('/export/stock-logs', params, '库存流水.xlsx');
+    if (ok) toast('已导出','success');
   }
   onMounted(load);
-  return { list, loading, keyword, page, pageSize, total, load, search, exportCsv, common, toast };
+  return { list, loading, keyword, changeType, types, page, pageSize, total, load, search, exportCsv, exportExcel, common, toast };
 }
 </script>
