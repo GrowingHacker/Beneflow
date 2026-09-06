@@ -49,22 +49,31 @@
       <el-select v-model="form.supplierId" placeholder="选择供应商" filterable style="width:240px;">
         <el-option v-for="s in suppliers" :key="s.id" :label="s.name" :value="s.id" />
       </el-select>
-      <el-input v-model="pickKw" placeholder="商品名称/条码" style="width:200px;margin-left:10px;" @keyup.enter="searchPick" />
+      <el-input v-model="pickKw" placeholder="名称 / 条码 / 拼音码（可扫码）" style="width:260px;margin-left:10px;" @keyup.enter="searchPick" />
       <el-button @click="searchPick">搜索商品</el-button>
+      <span class="muted" style="font-size:12px;">用扫码枪扫条码后自动回车，命中即加入清单</span>
     </div>
     <el-table :data="form.items" size="small" border empty-text="请添加商品">
-      <el-table-column label="商品" min-width="160"><template #default="{ row }">{{ row.name }}<div class="muted" style="font-size:12px;">{{ row.barcode }}</div></template></el-table-column>
-      <el-table-column label="数量" width="120"><template #default="{ row }"><el-input-number v-model="row.qty" :min="1" size="small" controls-position="right" /></template></el-table-column>
+      <el-table-column label="商品" min-width="160">
+        <template #default="{ row }">{{ row.name }}<el-tag v-if="row.isWeighted" size="small" type="warning" style="margin-left:4px;">称重</el-tag><div class="muted" style="font-size:12px;">{{ row.barcode || '无条码' }}</div></template>
+      </el-table-column>
+      <el-table-column label="数量" width="130">
+        <template #default="{ row }">
+          <el-input-number v-model="row.qty" :min="row.isWeighted ? 0.001 : 1" :step="row.isWeighted ? 0.5 : 1" :precision="row.isWeighted ? 3 : undefined" size="small" controls-position="right" />
+          <div v-if="row.isWeighted" class="muted" style="font-size:12px;">单位：{{ row.unit || '斤' }}</div>
+        </template>
+      </el-table-column>
       <el-table-column label="进价" width="120"><template #default="{ row }"><el-input-number v-model="row.costPrice" :min="0" :precision="2" size="small" controls-position="right" /></template></el-table-column>
       <el-table-column label="小计" width="100"><template #default="{ row }">{{ common.money(row.qty * row.costPrice) }}</template></el-table-column>
       <el-table-column label="操作" width="70" align="center"><template #default="{ $index }"><el-button text type="danger" title="移除" @click="form.items.splice($index,1)"><el-icon><Delete /></el-icon></el-button></template></el-table-column>
     </el-table>
     <div style="margin-top:10px;text-align:right;">
-      共 {{ form.items.reduce((s,i)=>s+Number(i.qty||0),0) }} 件，合计 <b class="cart-total">{{ common.money(form.items.reduce((s,i)=>s+Number(i.qty||0)*Number(i.costPrice||0),0)) }}</b>
+      共 {{ form.items.reduce((s,i)=>s+Number(i.qty||0),0) }}（含称重重量），合计 <b class="cart-total">{{ common.money(form.items.reduce((s,i)=>s+Number(i.qty||0)*Number(i.costPrice||0),0)) }}</b>
     </div>
     <div style="margin-top:8px;">
-      <span class="muted">搜索结果（点击加入）：</span>
-      <el-button v-for="p in pickList" :key="p.id" size="small" style="margin:4px;" @click="addPick(p)">{{ p.name }}（{{ p.barcode }}）</el-button>
+      <span class="muted">搜索结果（点击加入，称重商品弹窗输入重量）：</span>
+      <el-button v-for="p in pickList" :key="p.id" size="small" style="margin:4px;" @click="addPick(p)">{{ p.name }}（{{ p.barcode || '无条码' }}）<span v-if="p.isWeighted" style="color:#e6a23c;">·称重</span></el-button>
+      <span v-if="pickSearched && !pickList.length" class="muted" style="font-size:12px;">未找到匹配商品</span>
     </div>
     <div v-if="isEdit" style="margin-top:8px;" class="muted">
       提示：修改后库存和成本将自动调整。若商品已发生销售导致库存不足，则无法修改。
@@ -72,6 +81,59 @@
     <template #footer>
       <el-button @click="createDialog=false">取消</el-button>
       <el-button type="primary" :loading="submitting" @click="submit">{{ isEdit ? '保存修改' : '提交进货单' }}</el-button>
+    </template>
+  </el-dialog>
+
+  <!-- 称重进货弹窗：散装商品按重量进货 -->
+  <el-dialog v-model="weighDialog" :title="'进货称重：' + (weighProduct ? weighProduct.name : '')" width="400px">
+    <div style="text-align:center;margin-bottom:14px;">
+      <span class="muted">散装称重商品，请输入本次进货重量与进价</span>
+    </div>
+    <el-form label-width="70px">
+      <el-form-item label="重量">
+        <el-input-number v-model="weighQty" :min="0.001" :step="0.5" :precision="3" size="large" controls-position="right" style="width:190px;" />
+        <span style="margin-left:10px;">{{ weighProduct ? (weighProduct.unit || '斤') : '' }}</span>
+      </el-form-item>
+      <el-form-item label="进价">
+        <el-input-number v-model="weighPrice" :min="0" :precision="2" size="large" controls-position="right" style="width:190px;" />
+        <span style="margin-left:10px;">元 / {{ weighProduct ? (weighProduct.unit || '斤') : '' }}</span>
+      </el-form-item>
+      <el-form-item label="小计">
+        <b class="cart-total" style="font-size:20px;">{{ common.money(weighQty * weighPrice) }}</b>
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="weighDialog=false">取消</el-button>
+      <el-button type="primary" @click="confirmWeigh">加入进货单</el-button>
+    </template>
+  </el-dialog>
+
+  <!-- 新建商品弹窗：扫码未建档时联网反查后快速建档 -->
+  <el-dialog v-model="npDialog" title="新建商品" width="480px">
+    <div v-if="npLoading" style="text-align:center;padding:8px 0;" class="muted">正在联网查询商品信息…</div>
+    <div v-else-if="npSource" style="margin-bottom:12px;padding:10px 12px;background:#ecf5ff;border:1px solid #d9ecff;border-radius:6px;color:#409eff;font-size:12.5px;line-height:1.6;">
+      <b>✅ 网络命中 · {{ npSource }}</b>
+      <div>{{ npHint }}</div>
+    </div>
+    <div v-else-if="npForm.isWeighted" style="margin-bottom:12px;padding:10px 12px;background:#fdf6ec;border:1px solid #faecd8;border-radius:6px;color:#e6a23c;font-size:12.5px;line-height:1.6;">
+      ⚖️ {{ npHint }}
+    </div>
+    <div v-else style="margin-bottom:12px;padding:10px 12px;background:#fef0f0;border:1px solid #fde2e2;border-radius:6px;color:#f56c6c;font-size:12.5px;line-height:1.6;">
+      ⚠️ {{ npHint }}
+    </div>
+    <el-form :model="npForm" label-width="70px" size="small">
+      <el-form-item label="条码"><el-input v-model="npForm.barcode" :disabled="npBarcodeLocked" placeholder="无条码可留空"></el-input></el-form-item>
+      <el-form-item label="名称"><el-input v-model="npForm.name" placeholder="商品名称"></el-input></el-form-item>
+      <el-form-item label="规格"><el-input v-model="npForm.spec" placeholder="如 500ml / 250g / 24包/箱"></el-input></el-form-item>
+      <el-form-item label="分类"><el-input v-model="npForm.categoryName" placeholder="选填：饮料"></el-input></el-form-item>
+      <el-form-item label="进价"><el-input v-model.number="npForm.costPrice" type="number" style="width:180px;" placeholder="进货单价"></el-input></el-form-item>
+      <el-form-item label="售价"><el-input v-model.number="npForm.salePrice" type="number" style="width:180px;" placeholder="零售单价（未填按进价×1.3）"></el-input></el-form-item>
+      <el-form-item label="称重"><el-switch v-model="npForm.isWeighted"></el-switch><span class="muted" style="margin-left:8px;font-size:12px;">散装称重，按重量进货销售</span></el-form-item>
+      <el-form-item label="单位"><el-input v-model="npForm.unit" style="width:180px;" :placeholder="npForm.isWeighted ? '斤 / 公斤' : '瓶/包/个'"></el-input></el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="npDialog=false">取消</el-button>
+      <el-button type="primary" @click="npSave">保存并加入</el-button>
     </template>
   </el-dialog>
 
@@ -93,8 +155,8 @@
     <div style="margin-top:16px;">
       <div class="muted" style="margin-bottom:8px;">商品明细：</div>
       <el-table :data="detail.items" size="small" border max-height="360">
-        <el-table-column label="商品" min-width="160"><template #default="{ row }">{{ row.name }}<div class="muted" style="font-size:12px;">{{ row.barcode }}</div></template></el-table-column>
-        <el-table-column label="数量" prop="qty" width="90" align="right" />
+        <el-table-column label="商品" min-width="160"><template #default="{ row }">{{ row.name }}<el-tag v-if="row.isWeighted" size="small" type="warning" style="margin-left:4px;">称重</el-tag><div class="muted" style="font-size:12px;">{{ row.barcode || '无条码' }}</div></template></el-table-column>
+        <el-table-column label="数量" width="110" align="right"><template #default="{ row }">{{ row.qty }}{{ row.isWeighted ? ' ' + (row.unit || '斤') : '' }}</template></el-table-column>
         <el-table-column label="进价" width="100" align="right"><template #default="{ row }">{{ common.money(row.costPrice) }}</template></el-table-column>
         <el-table-column label="小计" width="110" align="right"><template #default="{ row }">{{ common.money(row.subTotal) }}</template></el-table-column>
       </el-table>
@@ -135,7 +197,7 @@ function pageSetup(deps) {
   const isEdit = ref(false);
   const editingId = ref(null);
   const form = ref({ supplierId: null, items: [] });
-  const pickKw = ref(''); const pickList = ref([]);
+  const pickKw = ref(''); const pickList = ref([]); const pickSearched = ref(false);
   const detailDialog = ref(false); const detail = ref({});
 
   async function onOpen() { if (!suppliers.value.length) { try { const r = await api.get('/suppliers', { params: { pageSize: 200 } }); suppliers.value = r.list||[]; } catch(e){} } }
@@ -143,13 +205,13 @@ function pageSetup(deps) {
     isEdit.value = false;
     editingId.value = null;
     form.value = { supplierId: null, items: [] };
-    pickKw.value=''; pickList.value=[];
+    pickKw.value=''; pickList.value=[]; pickSearched.value=false;
     createDialog.value = true;
   }
   async function openEdit(row) {
     isEdit.value = true;
     editingId.value = row.id;
-    pickKw.value=''; pickList.value=[];
+    pickKw.value=''; pickList.value=[]; pickSearched.value=false;
     // 加载明细
     try {
       const res = await api.get('/purchases/' + row.id);
@@ -159,6 +221,8 @@ function pageSetup(deps) {
           id: d.productId,
           barcode: d.barcode || '',
           name: d.name || '',
+          isWeighted: !!d.isWeighted,
+          unit: d.unit || '',
           qty: d.qty,
           costPrice: d.costPrice,
         })),
@@ -166,10 +230,154 @@ function pageSetup(deps) {
       createDialog.value = true;
     } catch(e){}
   }
-  async function searchPick() { try { const r = await api.get('/products', { params: { keyword: pickKw.value, pageSize: 20 } }); pickList.value = r.list||[]; } catch(e){} }
+  async function searchPick() {
+    const kw = (pickKw.value || '').trim();
+    if (!kw) { pickList.value = []; pickSearched.value = false; return; }
+    try {
+      const r = await api.get('/products', { params: { keyword: kw, pageSize: 20 } });
+      const list = r.list || [];
+      // 扫码枪整码精确命中：自动加入清单并清空输入（扫码枪扫码后自动回车即完成录入）
+      const exact = list.find(p => p.barcode && p.barcode === kw);
+      if (exact) {
+        addPick(exact);
+        pickKw.value = ''; pickList.value = []; pickSearched.value = false;
+        toast('已加入：' + exact.name, 'success');
+        return;
+      }
+      pickList.value = list;
+      pickSearched.value = true;
+      if (!list.length) {
+        if (/^\d{6,}$/.test(kw) || /^L\d{8,}$/i.test(kw)) {
+          // 条码样式：本地无档案 → 联网反查并弹新建商品
+          scanOrCreate(kw);
+        } else {
+          // 名称/拼音码搜索无结果：弹窗询问是否创建
+          ElementPlus.ElMessageBox.confirm(
+            '未找到「' + kw + '」的商品档案，是否立即创建？',
+            '没有商品档案',
+            { confirmButtonText: '创建商品', cancelButtonText: '取消', type: 'warning' }
+          ).then(function () { npOpenManual('', kw); }).catch(function () {});
+        }
+      }
+    } catch(e) { pickList.value = []; pickSearched.value = true; }
+  }
+
+  // ---- 新建商品（扫码未建档时联网反查） ----
+  const npDialog = ref(false);
+  const npBarcodeLocked = ref(true);
+  const npLoading = ref(false);
+  const npSource = ref(''); const npHint = ref('');
+  const npForm = ref({ barcode: '', name: '', categoryName: '', spec: '', salePrice: '', costPrice: '', unit: '件', isWeighted: false });
+
+  // 手动建档（条码可编辑）：presetName 为搜索关键词预填名称
+  function npOpenManual(barcode, presetName) {
+    npForm.value = { barcode: barcode || '', name: presetName || '', categoryName: '', spec: '', salePrice: '', costPrice: '', unit: '件', isWeighted: false };
+    npBarcodeLocked.value = !!barcode;
+    npLoading.value = false;
+    npSource.value = '';
+    npHint.value = '手动新建商品：散装称重商品请打开「称重」开关并填写单位（如 斤/公斤）。';
+    npDialog.value = true;
+  }
+
+  // 扫码未命中：联网反查商品信息后进新建弹窗（条码锁定）
+  async function scanOrCreate(code) {
+    npForm.value = { barcode: code, name: '', categoryName: '', spec: '', salePrice: '', costPrice: '', unit: '件', isWeighted: false };
+    npBarcodeLocked.value = true;
+    npLoading.value = true;
+    npSource.value = ''; npHint.value = '';
+    npDialog.value = true;
+    let netInfo = null;
+    try { netInfo = await api.get('/barcode/lookup/' + encodeURIComponent(code)); } catch (e) { netInfo = null; }
+    npLoading.value = false;
+    if (netInfo) {
+      var displayName = (netInfo.name || '').trim();
+      var brandRaw = (netInfo.brand || '').trim();
+      if (brandRaw && displayName) {
+        var brandParts = brandRaw.split(/[,，、\/;；]/).map(function (s) { return s.trim(); }).filter(Boolean);
+        var mainBrand = brandParts[0];
+        var nameHead = displayName.split(/[\s\-_,，\/]/).filter(Boolean)[0] || '';
+        var overlap = brandParts.some(function (b) {
+          return b && nameHead && b.toLowerCase() === nameHead.toLowerCase()
+            || b && displayName.toLowerCase().indexOf(b.toLowerCase()) === 0;
+        });
+        if (!overlap && mainBrand) displayName = mainBrand + ' ' + displayName;
+      }
+      npForm.value = {
+        barcode: netInfo.barcode || code,
+        name: displayName || '',
+        categoryName: netInfo.category || '',
+        spec: netInfo.spec || '',
+        costPrice: netInfo.suggestedCostPrice != null && netInfo.suggestedCostPrice !== '' ? ('' + netInfo.suggestedCostPrice) : '',
+        salePrice: netInfo.suggestedSalePrice != null && netInfo.suggestedSalePrice !== '' ? ('' + netInfo.suggestedSalePrice) : '',
+        unit: netInfo.unit || '件',
+        isWeighted: false
+      };
+      npSource.value = (netInfo.source || '网络公开数据源') + (netInfo.spec ? ' / 规格：' + netInfo.spec : '');
+      npHint.value = '商品信息来自网络，可能有误差，请核对后保存。';
+    } else {
+      npHint.value = '未联网查到该商品，请手动填写。';
+    }
+  }
+
+  // 保存新建商品并加入进货单（称重商品转称重弹窗）
+  async function npSave() {
+    const f = npForm.value;
+    if (!f.name) { toast('请填写商品名称', 'warning'); return; }
+    const cost = Number(f.costPrice) || 0;
+    const sale = Number(f.salePrice) || cost * 1.3 || 0;   // 售价未填自动按进价×1.3 估
+    const unit = f.unit || (f.isWeighted ? '斤' : '件');
+    try {
+      const p = await api.post('/products', {
+        barcode: (f.barcode || '').trim(), name: f.name,
+        spec: (f.spec || '').trim(),
+        costPrice: cost, salePrice: sale,
+        unit: unit, stockQuantity: 0, safetyStock: 0,
+        categoryName: f.categoryName || '未分类', status: '上架',
+        isWeighted: !!f.isWeighted
+      });
+      const newP = { id: p.id, barcode: (f.barcode || '').trim(), name: f.name, isWeighted: !!f.isWeighted, unit: unit, costPrice: cost };
+      if (newP.isWeighted) openWeighDialog(newP); else addPick(newP);
+      toast('商品已创建并加入进货单', 'success');
+      npDialog.value = false;
+      pickKw.value = ''; pickList.value = []; pickSearched.value = false;
+    } catch (e) { /* 失败提示由 api.js 拦截器统一弹出 */ }
+  }
+
+  // ---- 称重进货弹窗 ----
+  const weighDialog = ref(false);
+  const weighProduct = ref(null);
+  const weighQty = ref(1);
+  const weighPrice = ref(0);
+
+  function openWeighDialog(p) {
+    weighProduct.value = p;
+    weighQty.value = 1;
+    weighPrice.value = Number(p.costPrice) || 0;
+    weighDialog.value = true;
+  }
+  function confirmWeigh() {
+    const p = weighProduct.value;
+    if (!p) return;
+    if (!weighQty.value || weighQty.value <= 0) { toast('请输入有效重量', 'warning'); return; }
+    if (weighPrice.value < 0) { toast('进价不能为负', 'warning'); return; }
+    const exist = form.value.items.find(i => i.id === p.id);
+    if (exist) {
+      exist.qty = Number(exist.qty) + Number(weighQty.value);
+      exist.costPrice = Number(weighPrice.value);
+    } else {
+      form.value.items.push({
+        id: p.id, barcode: p.barcode || '', name: p.name,
+        isWeighted: true, unit: p.unit || '斤',
+        qty: Number(weighQty.value), costPrice: Number(weighPrice.value),
+      });
+    }
+    weighDialog.value = false;
+  }
+
   function addPick(p) {
+    if (p.isWeighted) { openWeighDialog(p); return; }
     if (form.value.items.find(i => i.id === p.id)) { toast('已在清单中', 'warning'); return; }
-    form.value.items.push({ id: p.id, barcode: p.barcode, name: p.name, qty: 1, costPrice: Number(p.costPrice) });
+    form.value.items.push({ id: p.id, barcode: p.barcode, name: p.name, isWeighted: false, unit: p.unit || '', qty: 1, costPrice: Number(p.costPrice) });
   }
   async function submit() {
     const f = form.value;
@@ -227,7 +435,9 @@ function pageSetup(deps) {
 
   onMounted(load);
   return { list, loading, keyword, dateFrom, dateTo, page, pageSize, total, load, search,
-    suppliers, createDialog, submitting, isEdit, form, pickKw, pickList, detailDialog, detail,
-    onOpen, openCreate, openEdit, searchPick, addPick, submit, doVoid, viewDetail, exportCsv, exportExcel, common, toast };
+    suppliers, createDialog, submitting, isEdit, form, pickKw, pickList, pickSearched, detailDialog, detail,
+    onOpen, openCreate, openEdit, searchPick, addPick, submit, doVoid, viewDetail, exportCsv, exportExcel,
+    weighDialog, weighProduct, weighQty, weighPrice, confirmWeigh, common, toast,
+    npDialog, npBarcodeLocked, npLoading, npSource, npHint, npForm, npSave };
 }
 </script>

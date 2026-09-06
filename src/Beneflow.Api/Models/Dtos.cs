@@ -143,6 +143,8 @@ public class ProductUpsertDto
     public decimal SafetyStock { get; set; }
     public bool HasExpiry { get; set; }
     public int ShelfLifeDays { get; set; }
+    /// <summary>是否称重商品（散装称重，按斤/公斤计价）</summary>
+    public bool IsWeighted { get; set; }
 
     /// <summary>
     /// 原始提交值（JSON 可能是字符串 "上架"/"下架" 或 bool true/false）。

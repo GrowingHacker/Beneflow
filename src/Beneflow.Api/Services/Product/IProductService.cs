@@ -11,6 +11,8 @@ public interface IProductService
     /// <summary>导出全量（按 keyword 筛选，不分页），返回行字典</summary>
     Task<List<Dictionary<string, object?>>> ExportListAsync(string? keyword);
     Task<ApiResult<object?>> GetByBarcode(string barcode);
+    /// <summary>获取称重商品列表（收银台快捷面板用）</summary>
+    Task<List<object>> GetWeightedProductsAsync();
     Task<ApiResult<object>> CreateAsync(ProductUpsertDto dto);
     Task<ApiResult> UpdateAsync(int id, JsonElement body);
     Task<ApiResult> DeleteAsync(int id);

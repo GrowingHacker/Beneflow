@@ -128,6 +128,23 @@
 
     <div class="m-label" style="margin-top:14px;">识别不到？手动输入条码</div>
     <el-input v-model="manualCode" size="large" class="manual-input" placeholder="输入条码后回车" @keyup.enter="onManualScan"></el-input>
+
+    <div class="m-label" style="margin-top:14px;">无条码？按名称/拼音码搜索</div>
+    <el-input v-model="searchKeyword" size="large" class="manual-input" placeholder="输入名称或拼音码后回车" @keyup.enter="searchProduct" clearable>
+      <template #append><el-button @click="searchProduct">搜</el-button></template>
+    </el-input>
+    <div v-if="searchResults.length" style="margin-top:8px;">
+      <div v-for="p in searchResults" :key="p.id" class="item-row" style="border-bottom:1px solid #f2f2f2;padding:8px 0;">
+        <div class="item-left">
+          <div class="item-name">{{ p.name }}<el-tag v-if="p.isWeighted" size="small" type="warning" style="margin-left:4px;">称重</el-tag></div>
+          <div class="item-code">{{ p.barcode || '无条码' }} · ¥{{ p.salePrice }}/{{ p.unit || '件' }} · 库存{{ p.stockQuantity }}</div>
+        </div>
+        <el-button text type="primary" size="small" @click="addSearchProduct(p)">加入</el-button>
+      </div>
+    </div>
+    <div v-else-if="searched" class="empty-tip" style="padding:12px 0;">
+      未找到匹配商品
+    </div>
   </div>
 
   <!-- 供应商选择 -->
@@ -145,16 +162,17 @@
       <el-button v-if="items.length" text type="danger" size="small" @click="items = []">清空</el-button>
     </div>
     <div v-if="items.length === 0" class="empty-tip">📦 还没添加商品，对准条码扫一下吧</div>
-    <div v-for="(it, i) in items" :key="it.barcode + i" class="item-row">
+    <div v-for="(it, i) in items" :key="(it.productId || it.barcode) + '-' + i" class="item-row">
       <div class="item-left">
-        <div class="item-name">{{ it.name }}</div>
-        <div class="item-code">{{ it.barcode }}</div>
+        <div class="item-name">{{ it.name }}<el-tag v-if="it.isWeighted" size="small" type="warning" style="margin-left:4px;">称重</el-tag></div>
+        <div class="item-code">{{ it.barcode || '无条码' }}</div>
         <div class="item-ops">
-          <el-input-number v-model="it.qty" :min="1" size="small" controls-position="right"></el-input-number>
-          <el-input v-model="it.costPrice" size="small" class="price-input" placeholder="进价">
+          <el-input-number v-model="it.qty" :min="it.isWeighted ? 0.001 : 1" :step="it.isWeighted ? 0.5 : 1" :precision="it.isWeighted ? 3 : undefined" size="small" controls-position="right"></el-input-number>
+          <el-input v-model="it.costPrice" size="small" class="price-input" :placeholder="it.isWeighted ? '进价/每' + (it.unit || '斤') : '进价'">
             <template #prepend>¥</template>
           </el-input>
         </div>
+        <div v-if="it.isWeighted" class="item-code">按重量进货，单位：{{ it.unit || '斤' }}，小计 ¥{{ (Number(it.qty) * Number(it.costPrice)).toFixed(2) }}</div>
       </div>
       <el-button text type="danger" class="item-del" @click="items.splice(i,1)">删除</el-button>
     </div>
@@ -166,16 +184,24 @@
       <div style="font-weight:600;margin-bottom:2px;">✅ 网络命中 · {{ newLookupSource }}</div>
       <div style="opacity:.88;">{{ newLookupHint }}</div>
     </div>
+    <div v-else-if="newForm.isWeighted" style="margin-bottom:14px;padding:10px 12px;background:#fdf6ec;border:1px solid #faecd8;border-radius:8px;color:#e6a23c;font-size:12.5px;line-height:1.6;">
+      ⚖️ {{ newLookupHint }}
+    </div>
     <div v-else style="margin-bottom:14px;padding:10px 12px;background:#fef0f0;border:1px solid #fde2e2;border-radius:8px;color:#f56c6c;font-size:12.5px;line-height:1.6;">
       ⚠️ {{ newLookupHint }}
     </div>
     <el-form :model="newForm" label-width="70px">
-      <el-form-item label="条码"><el-input v-model="newForm.barcode" disabled></el-input></el-form-item>
+      <el-form-item label="条码"><el-input v-model="newForm.barcode" :disabled="newBarcodeLocked" placeholder="无条码可留空"></el-input></el-form-item>
       <el-form-item label="名称"><el-input v-model="newForm.name" placeholder="商品名称"></el-input></el-form-item>
+      <el-form-item label="规格"><el-input v-model="newForm.spec" placeholder="如 500ml / 250g / 24包/箱"></el-input></el-form-item>
       <el-form-item label="分类"><el-input v-model="newForm.categoryName" placeholder="选填：饮料"></el-input></el-form-item>
       <el-form-item label="进价"><el-input v-model.number="newForm.costPrice" type="number" placeholder="进货单价"></el-input></el-form-item>
       <el-form-item label="售价"><el-input v-model.number="newForm.salePrice" type="number" placeholder="零售单价"></el-input></el-form-item>
-      <el-form-item label="单位"><el-input v-model="newForm.unit" placeholder="瓶/包/个"></el-input></el-form-item>
+      <el-form-item label="称重">
+        <el-switch v-model="newForm.isWeighted"></el-switch>
+        <span class="muted" style="margin-left:8px;font-size:12px;">散装称重，按重量进货销售</span>
+      </el-form-item>
+      <el-form-item label="单位"><el-input v-model="newForm.unit" :placeholder="newForm.isWeighted ? '斤 / 公斤' : '瓶/包/个'"></el-input></el-form-item>
     </el-form>
     <template #footer>
       <el-button @click="newDialog=false">取消</el-button>
@@ -183,10 +209,33 @@
     </template>
   </el-dialog>
 
+  <!-- 称重进货弹窗：散装商品按重量进货 -->
+  <el-dialog v-model="weighDialog" :title="'进货称重：' + (weighProduct ? weighProduct.name : '')" width="94%" top="12vh">
+    <div class="muted" style="text-align:center;margin-bottom:12px;">散装称重商品，输入本次进货重量与进价</div>
+    <el-form label-width="70px">
+      <el-form-item label="重量">
+        <el-input-number v-model="weighQty" :min="0.001" :step="0.5" :precision="3" size="large" controls-position="right" style="width:100%;"></el-input-number>
+      </el-form-item>
+      <el-form-item label="单位">
+        <span>{{ weighProduct ? (weighProduct.unit || '斤') : '' }}</span>
+      </el-form-item>
+      <el-form-item label="进价">
+        <el-input-number v-model="weighPrice" :min="0" :precision="2" size="large" controls-position="right" style="width:100%;"></el-input-number>
+      </el-form-item>
+      <el-form-item label="小计">
+        <b style="color:#f56c6c;font-size:20px;">¥{{ weighSubTotal }}</b>
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="weighDialog=false">取消</el-button>
+      <el-button type="primary" @click="confirmWeigh">加入清单</el-button>
+    </template>
+  </el-dialog>
+
   <div style="height:80px;"></div>
   <div class="total-bar">
     <div class="info">
-      <div class="qty">合计 {{ totalQty }} 件</div>
+      <div class="qty">合计 {{ totalQty }}（含称重重量）</div>
       <div class="price">¥{{ totalAmount }}</div>
     </div>
     <el-button type="primary" class="big-btn" :loading="submitting" @click="submit">提交进货单</el-button>
@@ -228,11 +277,49 @@
       const suppliers = ref([]);
       const items = ref([]);
       const manualCode = ref('');
+      const searchKeyword = ref('');
+      const searchResults = ref([]);
+      const searched = ref(false);
       const submitting = ref(false);
       const newDialog = ref(false);
+      const newBarcodeLocked = ref(true);      // 扫码未命中时条码锁定；手动新建可留空
       const newLookupSource = ref('');  // 联网反查的来源（命中时显示）
       const newLookupHint = ref('');    // 联网反查的提示文案
-      const newForm = ref({ barcode: '', name: '', categoryName: '', salePrice: '', costPrice: '', unit: '个' });
+      const newForm = ref({ barcode: '', name: '', categoryName: '', spec: '', salePrice: '', costPrice: '', unit: '个', isWeighted: false });
+
+      // ---- 称重进货弹窗 ----
+      const weighDialog = ref(false);
+      const weighProduct = ref(null);
+      const weighQty = ref(1);
+      const weighPrice = ref(0);
+      const weighSubTotal = computed(() => ((Number(weighQty.value) || 0) * (Number(weighPrice.value) || 0)).toFixed(2));
+
+      function openWeighDialog(p) {
+        weighProduct.value = p;
+        weighQty.value = 1;
+        weighPrice.value = Number(p.costPrice) || 0;
+        weighDialog.value = true;
+      }
+      function confirmWeigh() {
+        const p = weighProduct.value;
+        if (!p) return;
+        const qty = Number(weighQty.value);
+        const price = Number(weighPrice.value);
+        if (!qty || qty <= 0) { ElementPlus.ElMessage.warning('请输入有效重量'); return; }
+        if (price < 0) { ElementPlus.ElMessage.warning('进价不能为负'); return; }
+        const exist = items.value.find(function (i) { return i.productId === p.id; });
+        if (exist) {
+          exist.qty = Number(exist.qty) + qty;
+          exist.costPrice = price;
+        } else {
+          items.value.push({
+            barcode: p.barcode || '', name: p.name, qty: qty, costPrice: price, productId: p.id,
+            isWeighted: true, unit: p.unit || '斤'
+          });
+        }
+        weighDialog.value = false;
+        ElementPlus.ElMessage.success('已添加：' + p.name);
+      }
       let html5Qr = null;
 
       const totalQty = computed(() => items.value.reduce((s, i) => s + Number(i.qty || 0), 0));
@@ -262,10 +349,15 @@
 
           if (localHit) {
             const p = localHit;
-            const exist = items.value.find(i => i.barcode === p.barcode);
-            if (exist) { exist.qty++; }
-            else items.value.push({ barcode: p.barcode, name: p.name, qty: 1, costPrice: p.costPrice, productId: p.id });
-            ElementPlus.ElMessage.success('已添加：' + p.name);
+            if (p.isWeighted) {
+              // 称重商品：不能按件累加，弹窗输入进货重量
+              openWeighDialog(p);
+            } else {
+              const exist = items.value.find(i => i.barcode === p.barcode);
+              if (exist) { exist.qty++; }
+              else items.value.push({ barcode: p.barcode, name: p.name, qty: 1, costPrice: p.costPrice, productId: p.id, isWeighted: false, unit: p.unit || '' });
+              ElementPlus.ElMessage.success('已添加：' + p.name);
+            }
             manualCode.value = '';
             return;
           }
@@ -305,16 +397,20 @@
               barcode: netInfo.barcode || code,
               name: displayName || '',
               categoryName: netInfo.category || '',
+              spec: netInfo.spec || '',
               costPrice: netInfo.suggestedCostPrice != null && netInfo.suggestedCostPrice !== '' ? ('' + netInfo.suggestedCostPrice) : '',
               salePrice: netInfo.suggestedSalePrice != null && netInfo.suggestedSalePrice !== '' ? ('' + netInfo.suggestedSalePrice) : '',
-              unit: netInfo.unit || '件'
+              unit: netInfo.unit || '件',
+              isWeighted: false
             };
+            newBarcodeLocked.value = true;
             var spec = netInfo.spec ? ' / 规格：' + netInfo.spec : '';
             var srcMap = { 'OpenFoodFacts': '国际食品数据库', 'ApiZero': '国内商品条码库' };
             newLookupSource.value = (srcMap[netInfo.source] || netInfo.source || '网络公开数据源') + spec;
             newLookupHint.value = '商品信息来自网络，可能有误差，请核对后保存。';
           } else {
-            newForm.value = { barcode: code, name: '', categoryName: '', salePrice: '', costPrice: '', unit: '件' };
+            newForm.value = { barcode: code, name: '', categoryName: '', spec: '', salePrice: '', costPrice: '', unit: '件', isWeighted: false };
+            newBarcodeLocked.value = true;
             newLookupSource.value = '';
             if (lookupErr) newLookupHint.value = '未联网查到该商品（' + lookupErr + '），请手动填写。';
             else newLookupHint.value = '未联网查到该商品，请手动填写。';
@@ -325,6 +421,52 @@
           ElementPlus.ElMessage.error('处理条码失败：' + (err && err.message ? err.message : err));
         }
         manualCode.value = '';
+      }
+
+      // ---- 搜索商品（无条码商品入库用） ----
+      async function searchProduct() {
+        var kw = searchKeyword.value.trim();
+        if (!kw) { searchResults.value = []; searched.value = false; return; }
+        try {
+          const res = await axios.get('/api/v1/products', {
+            params: { keyword: kw, pageSize: 20 },
+            headers: { Authorization: 'Bearer ' + token }
+          });
+          if (res.data.code === 0) {
+            searchResults.value = res.data.data.list || [];
+            searched.value = true;
+            if (!searchResults.value.length) {
+              // 搜索无结果：弹窗告知没有档案，可直接创建
+              ElementPlus.ElMessageBox.confirm(
+                '未找到「' + kw + '」的商品档案，是否立即创建？',
+                '没有商品档案',
+                { confirmButtonText: '创建商品', cancelButtonText: '取消', type: 'warning' }
+              ).then(function () { openNewProduct(false); newForm.value.name = kw; }).catch(function () {});
+            }
+          }
+        } catch (e) { searchResults.value = []; searched.value = true; }
+      }
+
+      function addSearchProduct(p) {
+        if (p.isWeighted) { openWeighDialog(p); return; }
+        var exist = items.value.find(function (i) { return i.barcode === p.barcode || i.productId === p.id; });
+        if (exist) { exist.qty++; }
+        else items.value.push({ barcode: p.barcode || '', name: p.name, qty: 1, costPrice: p.costPrice, productId: p.id, isWeighted: false, unit: p.unit || '' });
+        ElementPlus.ElMessage.success('已添加：' + p.name);
+        searchKeyword.value = '';
+        searchResults.value = [];
+        searched.value = false;
+      }
+
+      // 手动新建（weighted=true 时预开称重开关，用于散装商品快捷建档）
+      function openNewProduct(weighted) {
+        newForm.value = { barcode: '', name: '', categoryName: '', spec: '', salePrice: '', costPrice: '', unit: weighted ? '斤' : '件', isWeighted: !!weighted };
+        newBarcodeLocked.value = false;
+        newLookupSource.value = '';
+        newLookupHint.value = weighted
+          ? '新建散装称重商品：条码一般留空，填名称、单位（斤/公斤）和进价，保存后直接称重进货。'
+          : '手动新建商品：散装称重商品请打开「称重」开关并填写单位（如 斤/公斤）。';
+        newDialog.value = true;
       }
 
       function onManualScan() {
@@ -362,20 +504,29 @@
         if (!f.name) { ElementPlus.ElMessage.warning('请填写商品名称'); return; }
         const cost = Number(f.costPrice) || 0;
         const sale = Number(f.salePrice) || cost * 1.3 || 0;   // 售价未填自动按进价×1.3 估
+        const unit = f.unit || (f.isWeighted ? '斤' : '件');
         try {
           const res = await axios.post('/api/v1/products', {
-            barcode: f.barcode, name: f.name,
+            barcode: (f.barcode || '').trim(), name: f.name,
+            spec: (f.spec || '').trim(),
             costPrice: cost, salePrice: sale,
-            unit: f.unit || '件', stockQuantity: 0, safetyStock: 0,
-            categoryName: f.categoryName || '未分类', status: '上架'
+            unit: unit, stockQuantity: 0, safetyStock: 0,
+            categoryName: f.categoryName || '未分类', status: '上架',
+            isWeighted: !!f.isWeighted
           }, { headers: { Authorization: 'Bearer ' + token } });
           if (res.data.code === 0) {
-            items.value.push({
-              barcode: f.barcode, name: f.name, qty: 1,
-              costPrice: cost, productId: res.data.data.id
-            });
+            const newId = res.data.data.id;
+            if (f.isWeighted) {
+              // 新建的称重商品：直接弹窗录入进货重量
+              openWeighDialog({ id: newId, name: f.name, barcode: (f.barcode || '').trim(), costPrice: cost, unit: unit });
+            } else {
+              items.value.push({
+                barcode: (f.barcode || '').trim(), name: f.name, qty: 1,
+                costPrice: cost, productId: newId, isWeighted: false, unit: unit
+              });
+              ElementPlus.ElMessage.success('商品已创建并加入清单');
+            }
             newDialog.value = false;
-            ElementPlus.ElMessage.success('商品已创建并加入清单');
           } else ElementPlus.ElMessage.error(res.data.message);
         } catch (e) { ElementPlus.ElMessage.error('创建失败，请检查网络'); }
       }
@@ -619,7 +770,9 @@
 
       return {
         supplierId, suppliers, items, manualCode, submitting,
-        newDialog, newForm, newLookupSource, newLookupHint,
+        searchKeyword, searchResults, searched, searchProduct, addSearchProduct,
+        newDialog, newBarcodeLocked, newForm, newLookupSource, newLookupHint, openNewProduct,
+        weighDialog, weighProduct, weighQty, weighPrice, weighSubTotal, confirmWeigh,
         totalQty, totalAmount, userName, logout,
         onManualScan, confirmNew, submit,
         camState, camHint, camExtraHint, toggleCam,

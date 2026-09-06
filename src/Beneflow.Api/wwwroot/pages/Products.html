@@ -30,6 +30,12 @@
             <span v-else class="muted">—</span>
           </template>
         </el-table-column>
+        <el-table-column label="称重" width="60">
+          <template #default="{ row }">
+            <el-tag v-if="row.isWeighted" type="warning" size="small">是</el-tag>
+            <span v-else class="muted">—</span>
+          </template>
+        </el-table-column>
         <el-table-column label="状态" width="80">
           <template #default="{ row }">
             <el-tag :type="row.status === '上架' ? 'success' : 'info'" size="small">{{ row.status }}</el-tag>
@@ -82,6 +88,10 @@
         <el-col :span="12"><el-form-item label="初始库存"><el-input v-model.number="form.stockQuantity" type="number" /></el-form-item></el-col>
         <el-col :span="12"><el-form-item label="安全库存"><el-input v-model.number="form.safetyStock" type="number" /></el-form-item></el-col>
         <el-col :span="12"><el-form-item label="保质期天数"><el-input v-model.number="form.shelfLifeDays" type="number" /></el-form-item></el-col>
+        <el-col :span="12"><el-form-item label="称重商品">
+          <el-switch v-model="form.isWeighted" active-text="是" inactive-text="否" @change="onWeightedChange" />
+          <span class="muted" style="font-size:12px;margin-left:6px;">散装称重，按斤/公斤计价</span>
+        </el-form-item></el-col>
         <el-col :span="24"><el-form-item label="备注"><el-input v-model="form.remark" type="textarea" :rows="2" /></el-form-item></el-col>
       </el-row>
     </el-form>
@@ -113,7 +123,16 @@ function pageSetup(deps) {
   const catDict = ref({});   // 分类专属字典：{ 分类名: { units:[], specs:[] } }
 
   function emptyForm() {
-    return { barcode:'', name:'', categoryId:'', categoryName:'', unit:'个', spec:'', salePrice:0, costPrice:0, stockQuantity:0, safetyStock:0, shelfLifeDays:0, remark:'', status:'上架' };
+    return { barcode:'', name:'', categoryId:'', categoryName:'', unit:'个', spec:'', salePrice:0, costPrice:0, stockQuantity:0, safetyStock:0, shelfLifeDays:0, isWeighted:false, remark:'', status:'上架' };
+  }
+
+  function onWeightedChange(val) {
+    if (val) {
+      // 称重商品：自动设置单位为"斤"，清空条码
+      if (!form.value.unit || form.value.unit === '个') form.value.unit = '斤';
+      form.value.barcode = '';
+      toast('称重商品无需条码，收银台通过快捷面板选择', 'info');
+    }
   }
 
   async function loadCats() {
@@ -246,6 +265,6 @@ function pageSetup(deps) {
 
   onMounted(function () { load(); loadCats(); loadDicts(); });
   return { list, loading, keyword, page, pageSize, total, dialog, form, common, cats, unitOptions, specOptions,
-    load, search, reset, openCreate, openEdit, save, toggleStatus, remove, expireTag, exportCsv, exportExcel };
+    load, search, reset, openCreate, openEdit, save, toggleStatus, remove, expireTag, exportCsv, exportExcel, onWeightedChange };
 }
 </script>

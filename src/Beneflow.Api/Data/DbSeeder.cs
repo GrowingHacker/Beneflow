@@ -39,6 +39,19 @@ public static class DbSeeder
 
     public static async Task SeedAsync(AppDbContext db)
     {
+        // 拼音码重算：拼音码功能上线前商品该字段为空，且早期映射表错位产生的码也不正确，
+        // 启动时按最新规则全量重算，与名称不一致才写库（幂等）
+        var allProducts = await db.Products.ToListAsync();
+        var pinyinChanged = 0;
+        foreach (var p in allProducts)
+        {
+            var code = PinyinHelper.GetPinyinCode(p.Name);
+            if (p.PinyinCode == code) continue;
+            p.PinyinCode = code;
+            pinyinChanged++;
+        }
+        if (pinyinChanged > 0) await db.SaveChangesAsync();
+
         if (await db.Users.AnyAsync()) return;
 
         // ---------- 菜单 ----------
@@ -137,11 +150,17 @@ public static class DbSeeder
             new() { Barcode="6901668003420", Name="海天金标生抽", CategoryId=catIds["调味"], Unit="瓶", Spec="500ml", SalePrice=12.80m, CostPrice=9.50m, StockQuantity=35, SafetyStock=8 },
             new() { Barcode="6925921202195", Name="舒肤佳香皂", CategoryId=catIds["日用"], Unit="块", Spec="115g", SalePrice=6.90m, CostPrice=4.80m, StockQuantity=60, SafetyStock=15 },
             new() { Barcode="6902261909063", Name="清风原木抽纸", CategoryId=catIds["日用"], Unit="包", Spec="200抽", SalePrice=5.90m, CostPrice=4.00m, StockQuantity=5, SafetyStock=20 },
+            // 称重商品（散装称重，无条码）
+            new() { Barcode="", Name="散装花生米", CategoryId=catIds["零食"], Unit="斤", Spec="散装", SalePrice=12.00m, CostPrice=8.00m, StockQuantity=15, SafetyStock=5, IsWeighted=true },
+            new() { Barcode="", Name="散装瓜子", CategoryId=catIds["零食"], Unit="斤", Spec="散装", SalePrice=10.00m, CostPrice=7.00m, StockQuantity=20, SafetyStock=5, IsWeighted=true },
+            new() { Barcode="", Name="散装糖果", CategoryId=catIds["零食"], Unit="斤", Spec="散装", SalePrice=15.00m, CostPrice=10.00m, StockQuantity=10, SafetyStock=3, IsWeighted=true },
+            new() { Barcode="", Name="散装锅巴", CategoryId=catIds["零食"], Unit="斤", Spec="散装", SalePrice=8.00m, CostPrice=5.00m, StockQuantity=12, SafetyStock=3, IsWeighted=true },
         };
         foreach (var p in products)
         {
             p.CreatedAt = DateTime.Parse("2026-08-01 08:00");
             p.UpdatedAt = p.CreatedAt;
+            p.PinyinCode = Utils.PinyinHelper.GetPinyinCode(p.Name);
             db.Products.Add(p);
         }
         await db.SaveChangesAsync();

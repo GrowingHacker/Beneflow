@@ -38,6 +38,11 @@ public class Product
     public bool HasExpiry { get; set; }
     /// <summary>保质期天数</summary>
     public int ShelfLifeDays { get; set; }
+    /// <summary>是否称重商品（散装称重，按斤/公斤计价，无条码）</summary>
+    public bool IsWeighted { get; set; }
+    /// <summary>拼音码（名称拼音首字母，用于收银快速搜索）</summary>
+    [System.ComponentModel.DataAnnotations.StringLength(20)]
+    public string PinyinCode { get; set; } = "";
     /// <summary>状态：true=上架 / false=下架</summary>
     public bool Status { get; set; } = true;
     public string? Remark { get; set; }

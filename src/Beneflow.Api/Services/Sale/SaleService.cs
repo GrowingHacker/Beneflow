@@ -188,6 +188,15 @@ public class SaleService : ISaleService
 
         if (dto.Items.Any(i => i.Qty <= 0)) return ApiResult<object>.Fail("商品数量必须大于 0");
 
+        // 校验：非称重商品数量必须为整数
+        var weightedIds = (await _db.Products.AsNoTracking()
+            .Where(p => p.IsWeighted).Select(p => p.Id).ToListAsync()).ToHashSet();
+        foreach (var item in dto.Items)
+        {
+            if (!weightedIds.Contains(item.ProductId) && item.Qty != Math.Truncate(item.Qty))
+                return ApiResult<object>.Fail($"商品数量必须为整数（称重商品才允许小数）");
+        }
+
         // 系统设置是否允许赊账
         var saleConfigJson = await _db.SystemConfigs.AsNoTracking()
             .Where(c => c.ConfigKey == "sale").Select(c => c.ConfigValue).FirstOrDefaultAsync();

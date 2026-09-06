@@ -2,6 +2,7 @@ using System.Text.Json;
 using Beneflow.Api.Data;
 using Beneflow.Api.Models;
 using Beneflow.Api.Models.Entities;
+using Beneflow.Api.Utils;
 using Microsoft.EntityFrameworkCore;
 
 namespace Beneflow.Api.Services;
@@ -19,14 +20,14 @@ public class ProductService : IProductService
     {
         var q = _db.Products.AsNoTracking()
             .Where(p => !p.IsDeleted &&
-                (string.IsNullOrEmpty(keyword) || p.Name.Contains(keyword) || p.Barcode.Contains(keyword)))
+                (string.IsNullOrEmpty(keyword) || p.Name.Contains(keyword) || p.Barcode.Contains(keyword) || p.PinyinCode.Contains(keyword.ToUpper())))
             .Select(p => new
             {
                 p.Id, p.Barcode, p.Name, p.CategoryId,
                 CategoryName = _db.Categories.Where(c => c.Id == p.CategoryId).Select(c => c.Name).FirstOrDefault(),
                 p.Unit, p.Spec, p.SalePrice, p.CostPrice,
                 p.StockQuantity, p.SafetyStock, p.ImageUrl,
-                p.HasExpiry, p.ShelfLifeDays, p.Status, p.CreatedAt,
+                p.HasExpiry, p.ShelfLifeDays, p.IsWeighted, p.PinyinCode, p.Status, p.CreatedAt,
             });
 
         var total = await q.CountAsync();
@@ -53,7 +54,10 @@ public class ProductService : IProductService
                 ["salePrice"] = r.SalePrice, ["costPrice"] = r.CostPrice,
                 ["stockQuantity"] = r.StockQuantity, ["safetyStock"] = r.SafetyStock,
                 ["imageUrl"] = r.ImageUrl, ["hasExpiry"] = r.HasExpiry,
-                ["shelfLifeDays"] = r.ShelfLifeDays, ["status"] = r.Status ? "上架" : "下架",
+                ["shelfLifeDays"] = r.ShelfLifeDays,
+                ["isWeighted"] = r.IsWeighted,
+                ["pinyinCode"] = r.PinyinCode,
+                ["status"] = r.Status ? "上架" : "下架",
                 ["createdAt"] = r.CreatedAt.ToString("yyyy-MM-dd HH:mm"),
             };
             if (r.HasExpiry && expMap.TryGetValue(r.Id, out var expire))
@@ -112,11 +116,28 @@ public class ProductService : IProductService
                 CategoryName = _db.Categories.Where(c => c.Id == p.CategoryId).Select(c => c.Name).FirstOrDefault(),
                 p.Unit, p.Spec, p.SalePrice, p.CostPrice,
                 p.StockQuantity, p.SafetyStock, p.HasExpiry, p.ShelfLifeDays,
+                p.IsWeighted, p.PinyinCode,
                 Status = p.Status ? "上架" : "下架",
             })
             .Take(1).ToListAsync();
         if (row.Count == 0) return ApiResult<object?>.Fail("商品不存在");
         return ApiResult<object?>.Ok(row[0]);
+    }
+
+    /// <summary>获取称重商品列表（收银台快捷面板用），按分类分组返回</summary>
+    public async Task<List<object>> GetWeightedProductsAsync()
+    {
+        var items = await _db.Products.AsNoTracking()
+            .Where(p => !p.IsDeleted && p.Status && p.IsWeighted)
+            .Select(p => new
+            {
+                p.Id, p.Name, p.Barcode, p.PinyinCode,
+                p.SalePrice, p.Unit, p.StockQuantity,
+                CategoryName = _db.Categories.Where(c => c.Id == p.CategoryId).Select(c => c.Name).FirstOrDefault() ?? "未分类",
+            })
+            .OrderBy(p => p.CategoryName).ThenBy(p => p.Name)
+            .ToListAsync();
+        return items.Cast<object>().ToList();
     }
 
     public async Task<ApiResult<object>> CreateAsync(ProductUpsertDto dto)
@@ -136,6 +157,7 @@ public class ProductService : IProductService
             Unit = dto.Unit, Spec = dto.Spec, SalePrice = dto.SalePrice, CostPrice = dto.CostPrice,
             StockQuantity = Math.Max(0, dto.StockQuantity), SafetyStock = Math.Max(0, dto.SafetyStock),
             HasExpiry = dto.HasExpiry, ShelfLifeDays = dto.ShelfLifeDays,
+            IsWeighted = dto.IsWeighted, PinyinCode = PinyinHelper.GetPinyinCode(dto.Name),
             Status = dto.Status, Remark = dto.Remark,
         };
         _db.Products.Add(p);
@@ -196,7 +218,12 @@ public class ProductService : IProductService
         if (body.TryGetProperty("name", out var nameEl))
         {
             var name = nameEl.GetString()?.Trim();
-            if (!string.IsNullOrWhiteSpace(name) && p.Name != name) { p.Name = name; changed = true; }
+            if (!string.IsNullOrWhiteSpace(name) && p.Name != name)
+            {
+                p.Name = name;
+                p.PinyinCode = PinyinHelper.GetPinyinCode(name);
+                changed = true;
+            }
         }
         if (body.TryGetProperty("barcode", out var bcEl))
         {
@@ -249,6 +276,11 @@ public class ProductService : IProductService
         {
             var sld = sldEl.GetInt32();
             if (p.ShelfLifeDays != sld) { p.ShelfLifeDays = sld; changed = true; }
+        }
+        if (body.TryGetProperty("isWeighted", out var iwEl) && (iwEl.ValueKind == JsonValueKind.True || iwEl.ValueKind == JsonValueKind.False))
+        {
+            var iw = iwEl.GetBoolean();
+            if (p.IsWeighted != iw) { p.IsWeighted = iw; changed = true; }
         }
         if (body.TryGetProperty("remark", out var rkEl))
         {

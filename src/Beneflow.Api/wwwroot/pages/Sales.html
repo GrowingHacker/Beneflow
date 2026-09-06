@@ -8,7 +8,7 @@
           <div class="toolbar">
             <el-input
               ref="scanRef" v-model="scanText" class="scan-input" size="large"
-              placeholder="扫描条码或输入商品名称后回车（可点右侧搜索）"
+              placeholder="扫描条码 / 输拼音码 / 输商品名称后回车"
               @keyup.enter="onScanEnter" clearable>
               <template #append>
                 <el-button @click="pickerDialog=true">🔍 搜索</el-button>
@@ -20,16 +20,18 @@
             <el-table :data="cart" border size="small" empty-text="购物车为空，请扫码添加商品">
               <el-table-column label="商品" min-width="180">
                 <template #default="{ row }">
-                  <div style="font-weight:600;">{{ row.name }}</div>
+                  <div style="font-weight:600;">{{ row.name }}
+                    <el-tag v-if="row.isWeighted" size="small" type="warning" style="margin-left:4px;">称重</el-tag>
+                  </div>
                   <div class="muted" style="font-size:12px;">{{ row.barcode }}</div>
                 </template>
               </el-table-column>
               <el-table-column label="单价" width="90">
-                <template #default="{ row }">{{ common.money(row.salePrice) }}</template>
+                <template #default="{ row }">{{ common.money(row.salePrice) }}<span class="muted" style="font-size:11px;">/{{ row.unit || '件' }}</span></template>
               </el-table-column>
-              <el-table-column label="数量" width="140">
+              <el-table-column label="数量 / 重量" width="140">
                 <template #default="{ row }">
-                  <el-input-number v-model="row.qty" :min="1" size="small" controls-position="right" @change="recompute(row)" />
+                  <el-input-number v-model="row.qty" :min="row.isWeighted ? 0.001 : 1" :step="row.isWeighted ? 0.5 : 1" :precision="row.isWeighted ? 3 : 0" size="small" controls-position="right" @change="recompute(row)" />
                 </template>
               </el-table-column>
               <el-table-column label="小计" width="100">
@@ -44,7 +46,7 @@
           </div>
 
           <div class="toolbar" style="margin-top: 12px;">
-            <span>共 <b>{{ totalQty }}</b> 件</span>
+            <span>共 <b>{{ qtySummary }}</b></span>
             <span class="muted">|</span>
             <span>合计 <b class="cart-total">{{ common.money(totalAmount) }}</b></span>
             <div class="grow"></div>
@@ -54,20 +56,32 @@
           </div>
         </div>
 
-        <!-- 右：挂单列表 -->
+        <!-- 右：称重商品快捷面板 + 挂单列表 -->
         <div class="page-card">
-          <div class="card-title">挂单（{{ parked.length }}）</div>
-          <div v-if="!parked.length" class="empty-tip">暂无挂单</div>
-          <div v-for="(p, i) in parked" :key="i" class="scanned-item">
-            <div>
-              <div style="font-weight:600;">{{ p.time }} · {{ p.items.length }} 件</div>
-              <div class="muted" style="font-size:12px;">合计 {{ common.money(p.amount) }}</div>
-            </div>
-            <div>
-              <el-button text type="primary" @click="restorePark(i)">恢复</el-button>
-              <el-button text type="danger" @click="parked.splice(i,1)">删</el-button>
-            </div>
-          </div>
+          <el-tabs v-model="rightTab" class="right-tabs">
+            <el-tab-pane label="⚖️ 称重商品" name="weighted">
+              <div v-if="!weightedGroups.length" class="empty-tip">暂无称重商品，请先在商品档案中标记</div>
+              <div v-for="g in weightedGroups" :key="g.category" style="margin-bottom:14px;">
+                <div class="muted" style="margin-bottom:6px;font-size:13px;">{{ g.category }}</div>
+                <el-button v-for="p in g.items" :key="p.id" size="small" style="margin:4px;" @click="openWeighDialog(p)">
+                  {{ p.name }}<span class="muted" style="font-size:11px;margin-left:4px;">{{ common.money(p.salePrice) }}/{{ p.unit || '斤' }}</span>
+                </el-button>
+              </div>
+            </el-tab-pane>
+            <el-tab-pane :label="`📋 挂单(${parked.length})`" name="parked">
+              <div v-if="!parked.length" class="empty-tip">暂无挂单</div>
+              <div v-for="(p, i) in parked" :key="i" class="scanned-item">
+                <div>
+                  <div style="font-weight:600;">{{ p.time }} · {{ p.items.length }} 件</div>
+                  <div class="muted" style="font-size:12px;">合计 {{ common.money(p.amount) }}</div>
+                </div>
+                <div>
+                  <el-button text type="primary" @click="restorePark(i)">恢复</el-button>
+                  <el-button text type="danger" @click="parked.splice(i,1)">删</el-button>
+                </div>
+              </div>
+            </el-tab-pane>
+          </el-tabs>
         </div>
       </div>
     </el-tab-pane>
@@ -124,16 +138,41 @@
 
   <!-- 商品搜索选择 -->
   <el-dialog v-model="pickerDialog" title="搜索商品" width="560px">
-    <el-input v-model="pickKeyword" placeholder="名称 / 条码" @keyup.enter="searchProducts" clearable>
+    <el-input v-model="pickKeyword" placeholder="名称 / 条码 / 拼音码" @keyup.enter="searchProducts" clearable>
       <template #append><el-button @click="searchProducts">搜索</el-button></template>
     </el-input>
     <el-table :data="pickList" size="small" style="margin-top:10px;" max-height="320">
-      <el-table-column label="名称" prop="name" />
+      <el-table-column label="名称" min-width="140">
+        <template #default="{ row }">
+          {{ row.name }}
+          <el-tag v-if="row.isWeighted" size="small" type="warning" style="margin-left:4px;">称重</el-tag>
+        </template>
+      </el-table-column>
       <el-table-column label="条码" prop="barcode" width="140" />
       <el-table-column label="售价" width="90"><template #default="{ row }">{{ common.money(row.salePrice) }}</template></el-table-column>
       <el-table-column label="库存" prop="stockQuantity" width="70" />
       <el-table-column label="操作" width="70" align="center"><template #default="{ row }"><el-button text type="primary" title="加入购物车" @click="pickProduct(row)"><el-icon><Plus /></el-icon></el-button></template></el-table-column>
     </el-table>
+  </el-dialog>
+
+  <!-- 称重输入弹窗 -->
+  <el-dialog v-model="weighDialog" :title="'称重：' + (weighProduct?.name || '')" width="360px" @opened="focusWeighInput">
+    <div style="text-align:center;margin-bottom:16px;">
+      <div class="muted">{{ common.money(weighProduct?.salePrice || 0) }} / {{ weighProduct?.unit || '斤' }}</div>
+    </div>
+    <el-form label-width="70px">
+      <el-form-item label="重量">
+        <el-input-number ref="weighInputRef" v-model="weighQty" :min="0.001" :step="0.5" :precision="3" size="large" controls-position="right" style="width:200px;" />
+        <span style="margin-left:10px;">{{ weighProduct?.unit || '斤' }}</span>
+      </el-form-item>
+      <el-form-item label="金额">
+        <span class="cart-total" style="font-size:22px;">{{ common.money((weighProduct?.salePrice || 0) * weighQty) }}</span>
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="weighDialog=false">取消</el-button>
+      <el-button type="primary" @click="confirmWeigh">加入购物车</el-button>
+    </template>
   </el-dialog>
 
   <!-- 结算弹窗 -->
@@ -181,13 +220,22 @@ function pageSetup(deps) {
   const { api, common, toast, confirm } = deps;
 
   const activeTab = ref('pos');
+  const rightTab = ref('weighted');
 
   // ---- 收银 ----
   const scanText = ref('');
   const scanRef = ref(null);
   const cart = ref([]);
 
-  const totalQty = computed(() => cart.value.reduce((s, i) => s + Number(i.qty || 0), 0));
+  const totalPieces = computed(() => cart.value.filter(i => !i.isWeighted).reduce((s, i) => s + Number(i.qty || 0), 0));
+  const totalWeight = computed(() => cart.value.filter(i => i.isWeighted).reduce((s, i) => s + Number(i.qty || 0), 0));
+  // 件数与重量分开统计（称重商品按斤，不计件）
+  const qtySummary = computed(() => {
+    const parts = [];
+    if (totalPieces.value > 0) parts.push(parseFloat(totalPieces.value.toFixed(3)) + ' 件');
+    if (totalWeight.value > 0) parts.push(parseFloat(totalWeight.value.toFixed(3)) + ' 斤');
+    return parts.length ? parts.join(' + ') : '0 件';
+  });
   const totalAmount = computed(() => cart.value.reduce((s, i) => s + Number(i.salePrice || 0) * Number(i.qty || 0), 0));
 
   function focusScan() { if (scanRef.value) scanRef.value.focus(); }
@@ -196,29 +244,92 @@ function pageSetup(deps) {
     const code = scanText.value.trim();
     scanText.value = '';
     if (!code) return;
-    // 先按条码查
+    // 先按条码查（静默，未命中自动降级）
     try {
-      const p = await api.get('/products/by-barcode/' + encodeURIComponent(code));
+      const p = await api.get('/products/by-barcode/' + encodeURIComponent(code), { silent: true });
       addProduct(p);
-    } catch (e) {
-      // 退化为按名称查
-      try {
-        const res = await api.get('/products', { params: { keyword: code, pageSize: 1 } });
-        if (res.list && res.list.length) addProduct(res.list[0]);
-        else toast('未找到商品：' + code, 'warning');
-      } catch (err) {}
-    }
+      return;
+    } catch (e) {}
+    // 再按名称/拼音码查：唯一命中直接加入，多个命中弹窗让用户选
+    try {
+      const res = await api.get('/products', { params: { keyword: code, pageSize: 50 } });
+      const list = res.list || [];
+      if (!list.length) { toast('未找到商品：' + code, 'warning'); return; }
+      if (list.length === 1) { addProduct(list[0]); return; }
+      pickKeyword.value = code;
+      pickList.value = list;
+      pickerDialog.value = true;
+    } catch (err) {}
   }
 
   function addProduct(p) {
+    // 称重商品一律先弹称重窗输入重量，不直接入车
+    if (p.isWeighted) { openWeighDialog(p); return; }
     const exist = cart.value.find(i => i.barcode === p.barcode || i.id === p.id);
-    if (exist) exist.qty++;
-    else cart.value.push({ id: p.id, barcode: p.barcode, name: p.name, salePrice: Number(p.salePrice), qty: 1 });
+    if (exist) {
+      exist.qty++;
+    } else {
+      cart.value.push({
+        id: p.id, barcode: p.barcode, name: p.name,
+        salePrice: Number(p.salePrice), qty: 1,
+        isWeighted: false, unit: p.unit || '',
+      });
+    }
     focusScan();
   }
 
   function recompute() {}
   function clearCart() { cart.value = []; focusScan(); }
+
+  // ---- 称重商品快捷面板 ----
+  const weightedProducts = ref([]);
+  const weightedGroups = computed(() => {
+    const map = {};
+    for (const p of weightedProducts.value) {
+      const cat = p.categoryName || '未分类';
+      if (!map[cat]) map[cat] = { category: cat, items: [] };
+      map[cat].items.push(p);
+    }
+    return Object.values(map);
+  });
+
+  async function loadWeightedProducts() {
+    try {
+      const res = await api.get('/products/weighted');
+      weightedProducts.value = res || [];
+    } catch (e) {}
+  }
+
+  // ---- 称重输入弹窗 ----
+  const weighDialog = ref(false);
+  const weighProduct = ref(null);
+  const weighQty = ref(1);
+  const weighInputRef = ref(null);
+
+  function openWeighDialog(p) {
+    weighProduct.value = p;
+    weighQty.value = 1;
+    weighDialog.value = true;
+  }
+  function focusWeighInput() {
+    nextTick(() => { if (weighInputRef.value) weighInputRef.value.focus(); });
+  }
+  function confirmWeigh() {
+    if (!weighProduct.value || weighQty.value <= 0) { toast('请输入有效重量', 'warning'); return; }
+    const p = weighProduct.value;
+    const exist = cart.value.find(i => i.id === p.id);
+    if (exist) {
+      exist.qty = Number(exist.qty) + Number(weighQty.value);
+    } else {
+      cart.value.push({
+        id: p.id, barcode: p.barcode || '', name: p.name,
+        salePrice: Number(p.salePrice), qty: Number(weighQty.value),
+        isWeighted: true, unit: p.unit || '斤',
+      });
+    }
+    weighDialog.value = false;
+    focusScan();
+  }
 
   // ---- 挂单 ----
   const parked = ref([]);
@@ -317,7 +428,6 @@ function pageSetup(deps) {
   }
   function searchOrders() { orderPage.value = 1; loadOrders(); }
 
-  // 作废订单：二次确认 → POST /sales/{id}/void → 刷新列表；作废后该订单不计入看板统计
   async function voidOrder(row) {
     try {
       await confirm(`确认作废订单「${row.orderNo}」？作废后该订单不计入销售额/订单数统计，且不可恢复。`);
@@ -345,11 +455,13 @@ function pageSetup(deps) {
     if (ok) toast('已导出','success');
   }
 
-  onMounted(() => { focusScan(); loadOrders(); });
+  onMounted(() => { focusScan(); loadOrders(); loadWeightedProducts(); });
 
   return {
-    activeTab, scanText, scanRef, cart, totalQty, totalAmount,
+    activeTab, rightTab, scanText, scanRef, cart, qtySummary, totalAmount,
     onScanEnter, recompute, clearCart, focusScan,
+    weightedProducts, weightedGroups, loadWeightedProducts,
+    weighDialog, weighProduct, weighQty, weighInputRef, openWeighDialog, focusWeighInput, confirmWeigh,
     parked, parkOrder, restorePark,
     pickerDialog, pickKeyword, pickList, searchProducts, pickProduct,
     settleDialog, discount, payMethod, cashReceived, wechatId, creditPhone, creditRemark, settling,

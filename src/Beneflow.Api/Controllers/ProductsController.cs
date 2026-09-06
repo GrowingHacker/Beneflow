@@ -19,6 +19,11 @@ public class ProductsController : BaseApiController
     [HttpGet("by-barcode/{barcode}")]
     public Task<ApiResult<object?>> ByBarcode(string barcode) => _svc.GetByBarcode(barcode);
 
+    /// <summary>获取称重商品列表（收银台快捷面板用）</summary>
+    [HttpGet("weighted")]
+    public async Task<ApiResult<List<object>>> Weighted()
+        => ApiResult<List<object>>.Ok(await _svc.GetWeightedProductsAsync());
+
     [HttpPost]
     public Task<ApiResult<object>> Create([FromBody] ProductUpsertDto dto) => _svc.CreateAsync(dto);
 

@@ -113,7 +113,7 @@ public class PurchaseService : IPurchaseService
             from d in _db.PurchaseOrderDetails.AsNoTracking()
             join p in _db.Products on d.ProductId equals p.Id
             where d.OrderId == id
-            select new { d, p.Barcode, ProductName = p.Name, p.Unit })
+            select new { d, p.Barcode, ProductName = p.Name, p.Unit, p.IsWeighted })
             .ToListAsync();
 
         return ApiResult<object>.Ok(new
@@ -132,6 +132,7 @@ public class PurchaseService : IPurchaseService
             items = details.Select(d => new
             {
                 productId = d.d.ProductId, barcode = d.Barcode, name = d.ProductName, unit = d.Unit,
+                isWeighted = d.IsWeighted,
                 qty = d.d.Qty, costPrice = d.d.CostPrice, subTotal = d.d.SubTotal,
             }),
         });
