@@ -2,6 +2,7 @@ using Beneflow.Api.Data;
 using Beneflow.Api.Models;
 using Beneflow.Api.Models.Entities;
 using Microsoft.EntityFrameworkCore;
+using System.Linq;
 
 namespace Beneflow.Api.Services;
 
@@ -319,18 +320,87 @@ public class StockService : IStockService
         return new { list, total, page, pageSize };
     }
 
-    /// <summary>批量标记临期商品为已处理</summary>
+    /// <summary>
+    /// 批量标记临期商品为已处理：扣减对应批次库存，写入库存流水（类型：临期报损）。
+    /// 扣减数量以批次剩余数量为准（即批次 Quantity 字段），最多扣减到 0，不会出现负库存。
+    /// </summary>
     public async Task<ApiResult> MarkProcessedAsync(long[] ids)
     {
         if (ids == null || ids.Length == 0) return ApiResult.Fail("请选择要标记的记录");
-        var batches = await _db.Batches.Where(b => ids.Contains(b.Id)).ToListAsync();
-        foreach (var b in batches)
+
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        try
         {
-            b.IsProcessed = true;
-            b.ProcessedAt = DateTime.Now;
+            var batches = await _db.Batches
+                .Where(b => ids.Contains(b.Id) && !b.IsProcessed)
+                .Include(b => b.Product)
+                .ToListAsync();
+
+            if (batches.Count == 0) return ApiResult.Fail("所选批次不存在或均已处理");
+
+            var totalQty = 0m;
+            var productNames = new List<string>();
+
+            foreach (var b in batches)
+            {
+                if (b.Quantity <= 0)
+                {
+                    // 批次数量为 0，直接标记不扣库存
+                    b.IsProcessed = true;
+                    b.ProcessedAt = DateTime.Now;
+                    continue;
+                }
+
+                var p = b.Product;
+                var beforeQty = p.StockQuantity;
+                // 扣减数量：以批次数量为准，但不超过当前库存（避免负库存）
+                var deductQty = Math.Min(b.Quantity, p.StockQuantity);
+                if (deductQty < 0) deductQty = 0;
+
+                p.StockQuantity -= deductQty;
+                if (p.StockQuantity < 0) p.StockQuantity = 0;
+                p.UpdatedAt = DateTime.Now;
+
+                _db.StockLogs.Add(new StockLog
+                {
+                    ProductId = p.Id,
+                    ChangeType = "临期报损",
+                    ChangeQty = -deductQty,
+                    BeforeQty = beforeQty,
+                    AfterQty = p.StockQuantity,
+                    RefNo = $"批次{b.BatchNo}",
+                    CreatedBy = _me.Id,
+                    CreatedAt = DateTime.Now,
+                });
+
+                b.IsProcessed = true;
+                b.ProcessedAt = DateTime.Now;
+
+                totalQty += deductQty;
+                if (!productNames.Contains(p.Name)) productNames.Add(p.Name);
+            }
+
+            await _db.SaveChangesAsync();
+
+            _db.OperationLogs.Add(new OperationLog
+            {
+                UserId = _me.Id,
+                UserName = _me.Username,
+                IpAddress = _me.ClientIp,
+                Module = "库存管理",
+                Action = "临期报损",
+                Target = $"处理 {batches.Count} 个批次，报损 {totalQty} 件（{string.Join("、", productNames.Take(3))}{(productNames.Count > 3 ? "等" : "")}）",
+            });
+            await _db.SaveChangesAsync();
+
+            await tx.CommitAsync();
+            return ApiResult.Ok($"已处理 {batches.Count} 个批次，扣减库存 {totalQty} 件");
         }
-        await _db.SaveChangesAsync();
-        return ApiResult.Ok();
+        catch (Exception ex)
+        {
+            await tx.RollbackAsync();
+            throw new InvalidOperationException("临期处理失败：" + ex.Message, ex);
+        }
     }
 
     // ================= 库存预警 =================

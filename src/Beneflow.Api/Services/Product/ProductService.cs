@@ -200,8 +200,18 @@ public class ProductService : IProductService
         }
         if (body.TryGetProperty("barcode", out var bcEl))
         {
-            var bc = bcEl.GetString()?.Trim();
-            if (bc != null && p.Barcode != bc) { p.Barcode = bc; changed = true; }
+            var bc = bcEl.GetString()?.Trim() ?? "";
+            if (p.Barcode != bc)
+            {
+                // 非空条码需要检查唯一性（空条码允许重复）
+                if (!string.IsNullOrEmpty(bc))
+                {
+                    if (await _db.Products.AnyAsync(x => x.Id != id && !x.IsDeleted && x.Barcode == bc))
+                        return ApiResult.Fail($"条码 {bc} 已被其他商品使用");
+                }
+                p.Barcode = bc;
+                changed = true;
+            }
         }
         if (body.TryGetProperty("unit", out var unitEl))
         {

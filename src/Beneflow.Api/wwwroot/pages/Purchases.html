@@ -15,12 +15,24 @@
       <el-table :data="list" v-loading="loading" border size="small">
         <el-table-column label="单号" prop="orderNo" width="160" />
         <el-table-column label="供应商" prop="supplierName" width="150" />
+        <el-table-column label="状态" width="90" align="center">
+          <template #default="{ row }">
+            <el-tag v-if="row.isVoided" type="info" size="small">已作废</el-tag>
+            <el-tag v-else type="success" size="small">正常</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column label="种类数" prop="itemCount" width="80" />
         <el-table-column label="总数量" prop="totalQty" width="90" />
         <el-table-column label="总金额" width="110"><template #default="{ row }">{{ common.money(row.totalAmount) }}</template></el-table-column>
         <el-table-column label="操作人" prop="createdByName" width="100" />
         <el-table-column label="日期" prop="createdAt" width="160" />
-        <el-table-column label="操作" width="70" fixed="right" align="center"><template #default="{ row }"><el-button text type="primary" title="详情" @click="viewDetail(row)"><el-icon><View /></el-icon></el-button></template></el-table-column>
+        <el-table-column label="操作" width="180" fixed="right" align="center">
+          <template #default="{ row }">
+            <el-button text type="primary" title="详情" @click="viewDetail(row)"><el-icon><View /></el-icon></el-button>
+            <el-button v-if="!row.isVoided" text type="warning" title="编辑" @click="openEdit(row)"><el-icon><Edit /></el-icon></el-button>
+            <el-button v-if="!row.isVoided" text type="danger" title="作废" @click="doVoid(row)"><el-icon><Delete /></el-icon></el-button>
+          </template>
+        </el-table-column>
       </el-table>
     </div>
     <div class="pagination-wrap">
@@ -30,8 +42,8 @@
     </div>
   </div>
 
-  <!-- 创建进货单 -->
-  <el-dialog v-model="createDialog" title="新增进货单" width="820px" @open="onOpen">
+  <!-- 新增 / 编辑 进货单 -->
+  <el-dialog v-model="createDialog" :title="isEdit ? '编辑进货单' : '新增进货单'" width="820px" @open="onOpen">
     <div class="toolbar">
       <span>供应商：</span>
       <el-select v-model="form.supplierId" placeholder="选择供应商" filterable style="width:240px;">
@@ -54,28 +66,50 @@
       <span class="muted">搜索结果（点击加入）：</span>
       <el-button v-for="p in pickList" :key="p.id" size="small" style="margin:4px;" @click="addPick(p)">{{ p.name }}（{{ p.barcode }}）</el-button>
     </div>
+    <div v-if="isEdit" style="margin-top:8px;" class="muted">
+      提示：修改后库存和成本将自动调整。若商品已发生销售导致库存不足，则无法修改。
+    </div>
     <template #footer>
       <el-button @click="createDialog=false">取消</el-button>
-      <el-button type="primary" :loading="submitting" @click="submit">提交进货单</el-button>
+      <el-button type="primary" :loading="submitting" @click="submit">{{ isEdit ? '保存修改' : '提交进货单' }}</el-button>
     </template>
   </el-dialog>
 
-  <el-dialog v-model="detailDialog" title="进货单详情" width="640px">
+  <el-dialog v-model="detailDialog" title="进货单详情" width="720px">
     <el-descriptions :column="2" border>
       <el-descriptions-item label="单号">{{ detail.orderNo }}</el-descriptions-item>
+      <el-descriptions-item label="状态">
+        <el-tag v-if="detail.isVoided" type="info" size="small">已作废</el-tag>
+        <el-tag v-else type="success" size="small">正常</el-tag>
+      </el-descriptions-item>
       <el-descriptions-item label="供应商">{{ detail.supplierName }}</el-descriptions-item>
       <el-descriptions-item label="总数量">{{ detail.totalQty }}</el-descriptions-item>
       <el-descriptions-item label="总金额">{{ common.money(detail.totalAmount) }}</el-descriptions-item>
       <el-descriptions-item label="日期">{{ detail.createdAt }}</el-descriptions-item>
       <el-descriptions-item label="操作人">{{ detail.createdByName }}</el-descriptions-item>
+      <el-descriptions-item v-if="detail.isVoided" label="作废时间">{{ detail.voidedAt }}</el-descriptions-item>
+      <el-descriptions-item v-if="detail.remark" label="备注" :span="2">{{ detail.remark }}</el-descriptions-item>
     </el-descriptions>
+    <div style="margin-top:16px;">
+      <div class="muted" style="margin-bottom:8px;">商品明细：</div>
+      <el-table :data="detail.items" size="small" border max-height="360">
+        <el-table-column label="商品" min-width="160"><template #default="{ row }">{{ row.name }}<div class="muted" style="font-size:12px;">{{ row.barcode }}</div></template></el-table-column>
+        <el-table-column label="数量" prop="qty" width="90" align="right" />
+        <el-table-column label="进价" width="100" align="right"><template #default="{ row }">{{ common.money(row.costPrice) }}</template></el-table-column>
+        <el-table-column label="小计" width="110" align="right"><template #default="{ row }">{{ common.money(row.subTotal) }}</template></el-table-column>
+      </el-table>
+    </div>
+    <div style="margin-top:16px;text-align:right;" v-if="!detail.isVoided">
+      <el-button type="warning" @click="openEdit(detail); detailDialog=false">编辑</el-button>
+      <el-button type="danger" @click="doVoid(detail); detailDialog=false">作废</el-button>
+    </div>
   </el-dialog>
 </div>
 
 <script page-setup>
 function pageSetup(deps) {
   const { ref, onMounted } = Vue;
-  const { api, common, toast } = deps;
+  const { api, common, toast, confirm } = deps;
 
   const list = ref([]); const loading = ref(false);
   const keyword = ref(''); const dateFrom = ref(''); const dateTo = ref('');
@@ -98,12 +132,40 @@ function pageSetup(deps) {
   const suppliers = ref([]);
   const createDialog = ref(false);
   const submitting = ref(false);
+  const isEdit = ref(false);
+  const editingId = ref(null);
   const form = ref({ supplierId: null, items: [] });
   const pickKw = ref(''); const pickList = ref([]);
   const detailDialog = ref(false); const detail = ref({});
 
   async function onOpen() { if (!suppliers.value.length) { try { const r = await api.get('/suppliers', { params: { pageSize: 200 } }); suppliers.value = r.list||[]; } catch(e){} } }
-  function openCreate() { form.value = { supplierId: null, items: [] }; pickKw.value=''; pickList.value=[]; createDialog.value = true; }
+  function openCreate() {
+    isEdit.value = false;
+    editingId.value = null;
+    form.value = { supplierId: null, items: [] };
+    pickKw.value=''; pickList.value=[];
+    createDialog.value = true;
+  }
+  async function openEdit(row) {
+    isEdit.value = true;
+    editingId.value = row.id;
+    pickKw.value=''; pickList.value=[];
+    // 加载明细
+    try {
+      const res = await api.get('/purchases/' + row.id);
+      form.value = {
+        supplierId: res.supplierId,
+        items: (res.items || []).map(d => ({
+          id: d.productId,
+          barcode: d.barcode || '',
+          name: d.name || '',
+          qty: d.qty,
+          costPrice: d.costPrice,
+        })),
+      };
+      createDialog.value = true;
+    } catch(e){}
+  }
   async function searchPick() { try { const r = await api.get('/products', { params: { keyword: pickKw.value, pageSize: 20 } }); pickList.value = r.list||[]; } catch(e){} }
   function addPick(p) {
     if (form.value.items.find(i => i.id === p.id)) { toast('已在清单中', 'warning'); return; }
@@ -116,13 +178,35 @@ function pageSetup(deps) {
     submitting.value = true;
     try {
       const payload = { supplierId: f.supplierId, details: f.items.map(i=>({ productId:i.id, name:i.name, qty:i.qty, costPrice:i.costPrice })), totalQty: f.items.reduce((s,i)=>s+Number(i.qty||0),0), totalAmount: f.items.reduce((s,i)=>s+Number(i.qty||0)*Number(i.costPrice||0),0) };
-      const res = await api.post('/purchases', payload);
-      toast('进货单已提交：' + res.orderNo, 'success');
+      let res;
+      if (isEdit.value) {
+        res = await api.put('/purchases/' + editingId.value, payload);
+        toast('修改成功：' + res.orderNo, 'success');
+      } else {
+        res = await api.post('/purchases', payload);
+        toast('进货单已提交：' + res.orderNo, 'success');
+      }
       createDialog.value = false; load();
     } catch(e){}
     finally { submitting.value = false; }
   }
-  function viewDetail(row) { detail.value = row; detailDialog.value = true; }
+  async function doVoid(row) {
+    try {
+      await confirm('确定作废该进货单？作废后库存将回退，且不可恢复。');
+    } catch(e) { return; }
+    try {
+      await api.post('/purchases/' + row.id + '/void');
+      toast('已作废', 'success');
+      load();
+    } catch(e){}
+  }
+  async function viewDetail(row) {
+    try {
+      const res = await api.get('/purchases/' + row.id);
+      detail.value = res;
+      detailDialog.value = true;
+    } catch(e){}
+  }
 
   async function exportCsv() {
     const params = { keyword: keyword.value, format: 'csv' };
@@ -143,7 +227,7 @@ function pageSetup(deps) {
 
   onMounted(load);
   return { list, loading, keyword, dateFrom, dateTo, page, pageSize, total, load, search,
-    suppliers, createDialog, submitting, form, pickKw, pickList, detailDialog, detail,
-    onOpen, openCreate, searchPick, addPick, submit, viewDetail, exportCsv, exportExcel, common, toast };
+    suppliers, createDialog, submitting, isEdit, form, pickKw, pickList, detailDialog, detail,
+    onOpen, openCreate, openEdit, searchPick, addPick, submit, doVoid, viewDetail, exportCsv, exportExcel, common, toast };
 }
 </script>

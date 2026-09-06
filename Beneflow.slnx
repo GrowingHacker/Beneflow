@@ -1,5 +1,4 @@
 <Solution>
-  <Folder Name="/src/">
-    <Project Path="src/Beneflow.Api/Beneflow.Api.csproj" />
-  </Folder>
+  <Project Path="src\Beneflow.Api\Beneflow.Api.csproj" />
+  <Project Path="tests\Beneflow.Tests\Beneflow.Tests.csproj" />
 </Solution>

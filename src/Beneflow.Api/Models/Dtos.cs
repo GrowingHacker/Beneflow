@@ -117,6 +117,8 @@ public class CreateStockCheckDto
 
 public class SettleCreditDto
 {
+    /// <summary>还款金额；为 0 或不传则全额结清（兼容旧版调用）</summary>
+    public decimal PayAmount { get; set; }
     public string PayMethod { get; set; } = "微信";
 }
 

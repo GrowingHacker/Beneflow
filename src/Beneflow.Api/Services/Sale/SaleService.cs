@@ -189,9 +189,23 @@ public class SaleService : ISaleService
         if (dto.Items.Any(i => i.Qty <= 0)) return ApiResult<object>.Fail("商品数量必须大于 0");
 
         // 系统设置是否允许赊账
-        var allowCredit = await _db.SystemConfigs.AsNoTracking()
+        var saleConfigJson = await _db.SystemConfigs.AsNoTracking()
             .Where(c => c.ConfigKey == "sale").Select(c => c.ConfigValue).FirstOrDefaultAsync();
-        if (dto.IsCredit && allowCredit != null && allowCredit.Contains("\"allowCredit\":false"))
+        var allowCredit = true; // 默认允许
+        if (!string.IsNullOrEmpty(saleConfigJson))
+        {
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(saleConfigJson);
+                if (doc.RootElement.TryGetProperty("allowCredit", out var prop)
+                    && prop.ValueKind == System.Text.Json.JsonValueKind.False)
+                {
+                    allowCredit = false;
+                }
+            }
+            catch { /* JSON 解析失败时默认允许赊账，不影响正常使用 */ }
+        }
+        if (dto.IsCredit && !allowCredit)
             return ApiResult<object>.Fail("系统设置不允许赊账，请更换收款方式");
 
         await using var tx = await _db.Database.BeginTransactionAsync();
@@ -203,8 +217,11 @@ public class SaleService : ISaleService
             var productIds = dto.Items.Select(i => i.ProductId).Distinct().ToList();
             var products = await _db.Products.Where(p => productIds.Contains(p.Id)).ToDictionaryAsync(p => p.Id);
 
-            foreach (var item in dto.Items.GroupBy(i => i.ProductId).Select(g =>
-                     new SaleItemDto { ProductId = g.Key, Qty = g.Sum(x => x.Qty) }))
+            // 按商品聚合（同一商品多行合并数量），同时校验库存
+            var groupedItems = dto.Items.GroupBy(i => i.ProductId).Select(g =>
+                new SaleItemDto { ProductId = g.Key, Qty = g.Sum(x => x.Qty) }).ToList();
+
+            foreach (var item in groupedItems)
             {
                 if (!products.TryGetValue(item.ProductId, out var p))
                     return ApiResult<object>.Fail($"商品 ID {item.ProductId} 不存在");
@@ -212,15 +229,46 @@ public class SaleService : ISaleService
                     return ApiResult<object>.Fail($"商品「{p.Name}」库存不足（当前 {p.StockQuantity}）");
             }
 
+            // ===== 后端重算所有金额（前端金额仅作展示参考，后端以数据库售价为准） =====
+            // 1. 计算商品明细：单价取数据库售价（确保不会被前端篡改价格）
+            var detailList = new List<(Product p, decimal qty, decimal unitPrice, decimal subTotal)>();
+            var calcTotalAmount = 0m;
+            foreach (var item in groupedItems)
+            {
+                var p = products[item.ProductId];
+                var unitPrice = p.SalePrice;   // 以数据库售价为准
+                var subTotal = Math.Round(item.Qty * unitPrice, 2);
+                detailList.Add((p, item.Qty, unitPrice, subTotal));
+                calcTotalAmount += subTotal;
+            }
+            calcTotalAmount = Math.Round(calcTotalAmount, 2);
+
+            // 2. 优惠金额：取前端传入值，但限制在合理范围（0 ~ 总金额）
+            var discountAmount = Math.Round(dto.DiscountAmount, 2);
+            if (discountAmount < 0) discountAmount = 0;
+            if (discountAmount > calcTotalAmount) discountAmount = calcTotalAmount;
+
+            // 3. 实付金额 = 总金额 - 优惠金额
+            var payAmount = Math.Round(calcTotalAmount - discountAmount, 2);
+            if (payAmount < 0) payAmount = 0;
+
+            // 4. 现金实收和找零（仅现金支付方式有效）
+            var isCash = dto.PayMethod == "现金";
+            var cashAmount = isCash ? Math.Round(dto.CashAmount, 2) : payAmount;
+            if (isCash && cashAmount < payAmount)
+                return ApiResult<object>.Fail($"实收金额不足（应收 ¥{payAmount}）");
+            var changeAmount = isCash ? Math.Round(cashAmount - payAmount, 2) : 0;
+            if (changeAmount < 0) changeAmount = 0;
+
             var so = new SaleOrder
             {
                 OrderNo = orderNo,
-                TotalAmount = Math.Round(dto.TotalAmount, 2),
-                DiscountAmount = Math.Round(dto.DiscountAmount, 2),
-                PayAmount = Math.Round(dto.PayAmount, 2),
+                TotalAmount = calcTotalAmount,
+                DiscountAmount = discountAmount,
+                PayAmount = payAmount,
                 PayMethod = dto.PayMethod,
-                CashAmount = Math.Round(dto.CashAmount, 2),
-                ChangeAmount = Math.Round(dto.ChangeAmount, 2),
+                CashAmount = cashAmount,
+                ChangeAmount = changeAmount,
                 IsCredit = dto.IsCredit,
                 WechatId = dto.IsCredit ? (string.IsNullOrWhiteSpace(dto.WechatId) ? null : dto.WechatId!.Trim()) : null,
                 Remark = dto.Remark,
@@ -229,26 +277,25 @@ public class SaleService : ISaleService
             _db.SaleOrders.Add(so);
             await _db.SaveChangesAsync();
 
-            foreach (var item in dto.Items)
+            foreach (var (p, qty, unitPrice, subTotal) in detailList)
             {
-                var p = products[item.ProductId];
                 var before = p.StockQuantity;
-                p.StockQuantity -= item.Qty;
+                p.StockQuantity -= qty;
                 p.UpdatedAt = DateTime.Now;
 
                 _db.SaleOrderDetails.Add(new SaleOrderDetail
                 {
                     OrderId = so.Id, ProductId = p.Id,
-                    ProductName = string.IsNullOrWhiteSpace(item.Name) ? p.Name : item.Name!,
-                    Barcode = item.Barcode ?? p.Barcode,
-                    Quantity = item.Qty,
-                    UnitPrice = item.UnitPrice > 0 ? item.UnitPrice : p.SalePrice,
+                    ProductName = p.Name,
+                    Barcode = p.Barcode,
+                    Quantity = qty,
+                    UnitPrice = unitPrice,
                     CostPrice = p.CostPrice,   // 销售时成本快照，毛利核算依据
-                    SubTotal = Math.Round(item.Qty * (item.UnitPrice > 0 ? item.UnitPrice : p.SalePrice), 2),
+                    SubTotal = subTotal,
                 });
                 _db.StockLogs.Add(new StockLog
                 {
-                    ProductId = p.Id, ChangeType = "销售出库", ChangeQty = -item.Qty,
+                    ProductId = p.Id, ChangeType = "销售出库", ChangeQty = -qty,
                     BeforeQty = before, AfterQty = p.StockQuantity,
                     RefNo = orderNo, CreatedBy = _me.Id, CreatedAt = so.CreatedAt,
                 });
@@ -284,21 +331,83 @@ public class SaleService : ISaleService
         }
     }
 
-    /// <summary>作废销售单：仅翻转 IsVoided 标记，不恢复库存、不删除已生成的流水；作废后该订单不计入看板统计</summary>
+    /// <summary>作废销售单：回补库存、写流水、同步作废赊账记录；已发生退货的订单不允许作废。</summary>
     public async Task<ApiResult> VoidAsync(int id)
     {
-        var o = await _db.SaleOrders.FirstOrDefaultAsync(x => x.Id == id);
-        if (o == null) return ApiResult.Fail("销售单不存在");
-        if (o.IsVoided) return ApiResult.Fail("该订单已作废，无需重复操作");
-
-        o.IsVoided = true;
-        _db.OperationLogs.Add(new OperationLog
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        try
         {
-            UserId = _me.Id, UserName = _me.Username, IpAddress = _me.ClientIp,
-            Module = "销售管理", Action = "作废订单", Target = $"{o.OrderNo} 实收 ¥{o.PayAmount} ({o.PayMethod})",
-        });
-        await _db.SaveChangesAsync();
-        return ApiResult.Ok();
+            var o = await _db.SaleOrders.FirstOrDefaultAsync(x => x.Id == id);
+            if (o == null) return ApiResult.Fail("销售单不存在");
+            if (o.IsVoided) return ApiResult.Fail("该订单已作废，无需重复操作");
+
+            var details = await _db.SaleOrderDetails.Where(d => d.OrderId == o.Id).ToListAsync();
+            if (details.Count == 0) return ApiResult.Fail("销售单缺少明细，无法作废");
+
+            // 已发生退货的订单不允许作废：退货已回补了部分库存，作废时整单回补会导致库存虚增
+            if (details.Any(d => d.ReturnedQuantity > 0))
+                return ApiResult.Fail("该订单已发生退货，不能作废，请通过退货流程处理");
+
+            // 回补库存
+            var productIds = details.Select(d => d.ProductId).Distinct().ToList();
+            var products = await _db.Products.Where(p => productIds.Contains(p.Id)).ToDictionaryAsync(p => p.Id);
+
+            foreach (var d in details)
+            {
+                if (!products.TryGetValue(d.ProductId, out var p))
+                    return ApiResult.Fail($"商品「{d.ProductName}」已被删除，无法回补库存");
+
+                var before = p.StockQuantity;
+                p.StockQuantity += d.Quantity;
+                p.UpdatedAt = DateTime.Now;
+
+                _db.StockLogs.Add(new StockLog
+                {
+                    ProductId = p.Id,
+                    ChangeType = "作废回补",
+                    ChangeQty = d.Quantity,
+                    BeforeQty = before,
+                    AfterQty = p.StockQuantity,
+                    RefNo = o.OrderNo,
+                    CreatedBy = _me.Id,
+                    CreatedAt = DateTime.Now,
+                });
+            }
+
+            // 赊账订单作废：同步作废赊账记录（仅未结清的；已结清的因为钱已经收了，作废需人工线下处理）
+            if (o.IsCredit)
+            {
+                var credit = await _db.CreditSales.FirstOrDefaultAsync(c => c.SaleOrderId == o.Id);
+                if (credit != null && !credit.Status)
+                {
+                    // 未结清的赊账：直接标记结清并备注作废，避免欠款统计虚高
+                    credit.Status = true;
+                    credit.SettledAt = DateTime.Now;
+                    credit.Remark = string.IsNullOrEmpty(credit.Remark)
+                        ? "订单作废，赊账自动清零"
+                        : credit.Remark + "（订单作废，赊账清零）";
+                }
+            }
+
+            o.IsVoided = true;
+
+            _db.OperationLogs.Add(new OperationLog
+            {
+                UserId = _me.Id, UserName = _me.Username, IpAddress = _me.ClientIp,
+                Module = "销售管理",
+                Action = "作废订单",
+                Target = $"{o.OrderNo} 实收 ¥{o.PayAmount} ({o.PayMethod})，回补库存 {details.Sum(d => d.Quantity)} 件",
+            });
+
+            await _db.SaveChangesAsync();
+            await tx.CommitAsync();
+            return ApiResult.Ok();
+        }
+        catch (Exception ex)
+        {
+            await tx.RollbackAsync();
+            throw new InvalidOperationException("作废销售单失败：" + ex.Message, ex);
+        }
     }
 
     // ================= 销售退货 =================
@@ -343,6 +452,7 @@ public class SaleService : ISaleService
         {
             var order = await _db.SaleOrders.FirstOrDefaultAsync(o => o.OrderNo == dto.OriginalOrderNo.Trim());
             if (order == null) return ApiResult<object>.Fail("原销售单不存在");
+            if (order.IsVoided) return ApiResult<object>.Fail("该销售单已作废，不能退货");
 
             var details = await _db.SaleOrderDetails
                 .Where(d => d.OrderId == order.Id).ToListAsync();
@@ -553,6 +663,11 @@ public class SaleService : ISaleService
         }).ToList();
     }
 
+    /// <summary>
+    /// 赊账还款：支持部分还款和全额结清。
+    /// - dto.PayAmount &gt; 0：部分还款，金额不能超过剩余欠款
+    /// - dto.PayAmount = 0 或不传：全额结清（兼容旧版调用）
+    /// </summary>
     public async Task<ApiResult> SettleAsync(int id, SettleCreditDto dto, string ip)
     {
         await using var tx = await _db.Database.BeginTransactionAsync();
@@ -563,23 +678,44 @@ public class SaleService : ISaleService
             if (c.Status) return ApiResult.Fail("该笔欠款已结清");
             if (c.RemainingAmount <= 0) return ApiResult.Fail("无待还金额");
 
+            // 还款金额：0 或不传则全额结清
+            var payAmount = dto.PayAmount > 0 ? Math.Round(dto.PayAmount, 2) : c.RemainingAmount;
+            if (payAmount <= 0) return ApiResult.Fail("还款金额必须大于 0");
+            if (payAmount > c.RemainingAmount)
+                return ApiResult.Fail($"还款金额不能超过剩余欠款（剩余 ¥{c.RemainingAmount}）");
+
+            var payMethod = string.IsNullOrEmpty(dto.PayMethod) ? "微信" : dto.PayMethod;
+
             _db.CreditPayments.Add(new CreditPayment
             {
-                CreditSaleId = c.Id, PayAmount = c.RemainingAmount,
-                PayMethod = string.IsNullOrEmpty(dto.PayMethod) ? "微信" : dto.PayMethod,
-                CreatedBy = _me.Id, CreatedAt = DateTime.Now,
+                CreditSaleId = c.Id,
+                PayAmount = payAmount,
+                PayMethod = payMethod,
+                CreatedBy = _me.Id,
+                CreatedAt = DateTime.Now,
             });
 
-            c.PaidAmount += c.RemainingAmount;
-            c.RemainingAmount = 0;
-            c.Status = true;
-            c.SettledAt = DateTime.Now;
+            c.PaidAmount += payAmount;
+            c.RemainingAmount = Math.Round(c.RemainingAmount - payAmount, 2);
+
+            var isFullSettle = c.RemainingAmount <= 0;
+            if (isFullSettle)
+            {
+                c.RemainingAmount = 0;
+                c.Status = true;
+                c.SettledAt = DateTime.Now;
+            }
 
             await _db.SaveChangesAsync();
+
+            var action = isFullSettle ? "结清欠款" : "部分还款";
+            var target = $"记录 #{id} 微信号 {c.WechatId}，本次还款 ¥{payAmount}（{payMethod}）";
+            if (isFullSettle) target += "，已全部结清";
+
             _db.OperationLogs.Add(new OperationLog
             {
                 UserId = _me.Id, UserName = _me.Username, IpAddress = _me.ClientIp, Module = "赊账管理",
-                Action = "结清欠款", Target = $"记录 #{id} 微信号 {c.WechatId}",
+                Action = action, Target = target,
             });
             await _db.SaveChangesAsync();
             await tx.CommitAsync();
@@ -588,7 +724,7 @@ public class SaleService : ISaleService
         catch (Exception ex)
         {
             await tx.RollbackAsync();
-            throw new InvalidOperationException("结清失败：" + ex.Message, ex);
+            throw new InvalidOperationException("还款失败：" + ex.Message, ex);
         }
     }
 

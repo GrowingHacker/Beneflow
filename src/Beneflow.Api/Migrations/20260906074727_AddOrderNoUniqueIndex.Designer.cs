@@ -4,6 +4,7 @@ using Beneflow.Api.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Beneflow.Api.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260906074727_AddOrderNoUniqueIndex")]
+    partial class AddOrderNoUniqueIndex
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -295,8 +298,7 @@ namespace Beneflow.Api.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("Barcode")
-                        .IsUnique()
-                        .HasFilter("Barcode <> ''");
+                        .IsUnique();
 
                     b.HasIndex("CategoryId");
 
@@ -389,9 +391,6 @@ namespace Beneflow.Api.Migrations
                     b.Property<int>("CreatedBy")
                         .HasColumnType("int");
 
-                    b.Property<bool>("IsVoided")
-                        .HasColumnType("bit");
-
                     b.Property<string>("OrderNo")
                         .IsRequired()
                         .HasMaxLength(20)
@@ -410,9 +409,6 @@ namespace Beneflow.Api.Migrations
                     b.Property<decimal>("TotalQty")
                         .HasPrecision(10, 3)
                         .HasColumnType("decimal(10,3)");
-
-                    b.Property<DateTime?>("VoidedAt")
-                        .HasColumnType("datetime2");
 
                     b.HasKey("Id");
 

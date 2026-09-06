@@ -11,6 +11,8 @@ public class PurchaseOrder
     public decimal TotalQty { get; set; }
     public decimal TotalAmount { get; set; }
     public string? Remark { get; set; }
+    public bool IsVoided { get; set; }
+    public DateTime? VoidedAt { get; set; }
     public int CreatedBy { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.Now;
 

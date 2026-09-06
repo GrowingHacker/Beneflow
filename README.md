@@ -85,6 +85,9 @@ Beneflow/
 │   ├── Utils/             # PasswordHasher、AesStringCipher、NetUtil
 │   └── wwwroot/           # 前端静态页（Vue 3 + Element Plus，动态加载 pages/*.html）
 │       └── lib/           # 离线第三方库（随仓库提交，无需下载）
+├── tests/Beneflow.Tests/  # 单元测试（xUnit + EF Core InMemory）
+│   ├── TestBase.cs        # 测试基类（InMemory DbContext、假用户、种子数据）
+│   └── PurchaseServiceTests.cs  # 采购进货单测试（创建/作废/编辑，23 个用例）
 ├── scripts/               # 部署/运维 PowerShell 脚本
 │   ├── deploy-kestrel-service.ps1
 │   ├── update-service.ps1
@@ -93,6 +96,17 @@ Beneflow/
 ├── README.md
 └── .gitignore
 ```
+
+## 单元测试
+
+使用 xUnit + EF Core InMemory 数据库，每个用例独立数据库，互不影响。
+
+```powershell
+# 运行所有测试
+dotnet test tests/Beneflow.Tests/Beneflow.Tests.csproj
+```
+
+当前覆盖：采购进货单的创建、作废、编辑（含库存数量、移动加权平均成本、流水记录、边界场景）共 23 个用例。
 
 ## 生产部署
 

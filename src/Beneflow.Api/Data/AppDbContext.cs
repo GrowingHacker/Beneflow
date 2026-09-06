@@ -91,8 +91,8 @@ public class AppDbContext : DbContext
             e.Property(x => x.Unit).HasMaxLength(10);
             e.Property(x => x.Spec).HasMaxLength(50);
             e.Property(x => x.ImageUrl).HasMaxLength(200);
-            // 条码唯一（允许多个空字符串差异，入库时统一生成店内码）
-            e.HasIndex(x => x.Barcode).IsUnique();
+            // 条码唯一（过滤索引：仅非空条码参与唯一约束，允许多个无条码商品共存）
+            e.HasIndex(x => x.Barcode).IsUnique().HasFilter("Barcode <> ''");
             e.Property(x => x.StockQuantity).HasPrecision(10, 3);
             e.Property(x => x.SafetyStock).HasPrecision(10, 3);
             e.Property(x => x.SalePrice).HasPrecision(10, 2);
@@ -121,12 +121,14 @@ public class AppDbContext : DbContext
         mb.Entity<PurchaseOrder>(e =>
         {
             e.Property(x => x.OrderNo).HasMaxLength(20);
+            e.HasIndex(x => x.OrderNo).IsUnique();
             e.Property(x => x.TotalQty).HasPrecision(10, 3);
             e.Property(x => x.TotalAmount).HasPrecision(12, 2);
         });
         mb.Entity<PurchaseReturn>(e =>
         {
             e.Property(x => x.OrderNo).HasMaxLength(20);
+            e.HasIndex(x => x.OrderNo).IsUnique();
             e.Property(x => x.RefundAmount).HasPrecision(12, 2);
         });
 
@@ -146,6 +148,7 @@ public class AppDbContext : DbContext
         mb.Entity<SaleOrder>(e =>
         {
             e.Property(x => x.OrderNo).HasMaxLength(20);
+            e.HasIndex(x => x.OrderNo).IsUnique();
             e.Property(x => x.TotalAmount).HasPrecision(12, 2);
             e.Property(x => x.DiscountAmount).HasPrecision(12, 2);
             e.Property(x => x.PayAmount).HasPrecision(12, 2);
@@ -162,7 +165,12 @@ public class AppDbContext : DbContext
             e.Property(x => x.SubTotal).HasPrecision(12, 2);
             e.Property(x => x.ReturnedQuantity).HasPrecision(10, 3).HasDefaultValueSql("(0)");
         });
-        mb.Entity<SaleReturn>(e => e.Property(x => x.RefundAmount).HasPrecision(12, 2));
+        mb.Entity<SaleReturn>(e =>
+        {
+            e.Property(x => x.OrderNo).HasMaxLength(20);
+            e.HasIndex(x => x.OrderNo).IsUnique();
+            e.Property(x => x.RefundAmount).HasPrecision(12, 2);
+        });
         mb.Entity<SaleReturnDetail>(e =>
         {
             e.Property(x => x.Qty).HasPrecision(10, 3);
@@ -197,6 +205,7 @@ public class AppDbContext : DbContext
         mb.Entity<StockCheck>(e =>
         {
             e.Property(x => x.OrderNo).HasMaxLength(20);
+            e.HasIndex(x => x.OrderNo).IsUnique();
             e.Property(x => x.Range).HasMaxLength(50);
             e.Property(x => x.ProfitQty).HasPrecision(10, 3);
             e.Property(x => x.LossQty).HasPrecision(10, 3);

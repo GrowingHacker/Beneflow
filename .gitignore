@@ -38,6 +38,9 @@ appsettings.Production.json
 .vscode/
 *.swp
 
+## TRAE 平台临时文件
+.trae-html-share-packages/
+
 ## OS
 Thumbs.db
 .DS_Store
