@@ -105,6 +105,8 @@ public class AppDbContext : DbContext
         {
             e.Property(x => x.BatchNo).HasMaxLength(30);
             e.Property(x => x.Quantity).HasPrecision(10, 3);
+            // 临期/过期统计与临期列表按 ExpireDate 范围查询、排序
+            e.HasIndex(x => x.ExpireDate);
             e.HasOne(x => x.Product).WithMany().HasForeignKey(x => x.ProductId)
              .OnDelete(DeleteBehavior.Cascade);
         });
@@ -122,6 +124,8 @@ public class AppDbContext : DbContext
         {
             e.Property(x => x.OrderNo).HasMaxLength(20);
             e.HasIndex(x => x.OrderNo).IsUnique();
+            // 列表/导出/报表按 CreatedAt 日期范围过滤，单号生成按当日计数
+            e.HasIndex(x => x.CreatedAt);
             e.Property(x => x.TotalQty).HasPrecision(10, 3);
             e.Property(x => x.TotalAmount).HasPrecision(12, 2);
         });
@@ -134,12 +138,16 @@ public class AppDbContext : DbContext
 
         mb.Entity<PurchaseOrderDetail>(e =>
         {
+            // 无 Order 导航属性，EF 不会自动建外键索引；列表聚合/明细/作废/编辑均按 OrderId 查询
+            e.HasIndex(x => x.OrderId);
             e.Property(x => x.Qty).HasPrecision(10, 3);
             e.Property(x => x.CostPrice).HasPrecision(10, 2);
             e.Property(x => x.SubTotal).HasPrecision(12, 2);
         });
         mb.Entity<PurchaseReturnDetail>(e =>
         {
+            // 作废守卫按 ReturnId 关联子查询（ProductId 复合覆盖退货商品判定）
+            e.HasIndex(x => new { x.ReturnId, x.ProductId });
             e.Property(x => x.Qty).HasPrecision(10, 3);
             e.Property(x => x.CostPrice).HasPrecision(10, 2);
             e.Property(x => x.SubTotal).HasPrecision(12, 2);
@@ -149,6 +157,8 @@ public class AppDbContext : DbContext
         {
             e.Property(x => x.OrderNo).HasMaxLength(20);
             e.HasIndex(x => x.OrderNo).IsUnique();
+            // 列表/导出/报表/仪表盘按 CreatedAt 日期范围过滤，单号生成按当日计数
+            e.HasIndex(x => x.CreatedAt);
             e.Property(x => x.TotalAmount).HasPrecision(12, 2);
             e.Property(x => x.DiscountAmount).HasPrecision(12, 2);
             e.Property(x => x.PayAmount).HasPrecision(12, 2);
@@ -180,6 +190,8 @@ public class AppDbContext : DbContext
 
         mb.Entity<CreditSale>(e =>
         {
+            // 赊账列表/导出/欠款报表按 CreatedAt 日期范围过滤
+            e.HasIndex(x => x.CreatedAt);
             e.Property(x => x.CreditAmount).HasPrecision(12, 2);
             e.Property(x => x.PaidAmount).HasPrecision(12, 2);
             e.Property(x => x.RemainingAmount).HasPrecision(12, 2);
@@ -212,9 +224,18 @@ public class AppDbContext : DbContext
         });
         mb.Entity<StockCheckDetail>(e =>
         {
+            // 无 Check 导航属性，EF 不会自动建外键索引；盘点确认按 CheckId 查明细
+            e.HasIndex(x => x.CheckId);
             e.Property(x => x.BookQty).HasPrecision(10, 3);
             e.Property(x => x.ActualQty).HasPrecision(10, 3);
             e.Property(x => x.DiffQty).HasPrecision(10, 3);
+        });
+
+        // ---------- 日志 ----------
+        mb.Entity<OperationLog>(e =>
+        {
+            // 日志查询按 CreatedAt 日期范围过滤 + 分页，表只增不删
+            e.HasIndex(x => x.CreatedAt);
         });
     }
 }
