@@ -10,6 +10,10 @@
       <el-button type="success" @click="openCreate">+ 新增进货单</el-button>
       <el-button @click="exportCsv">导出 CSV</el-button>
       <el-button type="success" @click="exportExcel">导出 Excel</el-button>
+      <el-button @click="downloadTemplate">下载导入模板</el-button>
+      <el-upload :show-file-list="false" accept=".xlsx,.xls" :before-upload="importExcel" style="display:inline-block;margin-left:10px;">
+        <el-button type="warning" :loading="importing">导入 Excel</el-button>
+      </el-upload>
     </div>
     <div class="table-wrap">
       <el-table :data="list" v-loading="loading" border size="small">
@@ -165,6 +169,122 @@
       <el-button type="warning" @click="openEdit(detail); detailDialog=false">编辑</el-button>
       <el-button type="danger" @click="doVoid(detail); detailDialog=false">作废</el-button>
     </div>
+  </el-dialog>
+
+  <!-- 导入预览：每个 Sheet = 一张进货单 -->
+  <el-dialog v-model="importPreviewDialog" title="批量导入预览" width="820px" :close-on-click-modal="false">
+    <el-alert v-if="importSkipped.length" type="info" :closable="false" style="margin-bottom:12px;">
+      以下 Sheet 已跳过（名称不匹配供应商或无数据）：{{ importSkipped.join('、') }}
+    </el-alert>
+    <el-alert type="warning" :closable="false" style="margin-bottom:12px;">
+      共解析到 {{ importOrders.length }} 张进货单。含错误的单据将不会创建，请修正后重导；其余可点击「确认导入」批量提交。
+    </el-alert>
+    <el-table :data="importOrders" size="small" border max-height="360">
+      <el-table-column label="供应商" prop="supplierName" width="160" />
+      <el-table-column label="明细数" prop="rowCount" width="80" align="center" />
+      <el-table-column label="有效商品" width="90" align="center">
+        <template #default="{ row }">{{ row.items.length }}</template>
+      </el-table-column>
+      <el-table-column label="错误数" width="80" align="center">
+        <template #default="{ row }">
+          <el-tag v-if="row.errors.length" type="danger" size="small">{{ row.errors.length }}</el-tag>
+          <span v-else>0</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="总数量" prop="totalQty" width="90" align="right" />
+      <el-table-column label="总金额" width="110" align="right"><template #default="{ row }">{{ common.money(row.totalAmount) }}</template></el-table-column>
+      <el-table-column label="状态" width="100" align="center">
+        <template #default="{ row }">
+          <el-tag v-if="row.errors.length" type="danger" size="small">有错误</el-tag>
+          <el-tag v-else type="success" size="small">可导入</el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="详情" width="80" align="center">
+        <template #default="{ row, $index }">
+          <el-button text type="primary" @click="viewOrderErrors($index)">查看</el-button>
+        </template>
+      </el-table-column>
+    </el-table>
+    <template #footer>
+      <el-button @click="importPreviewDialog=false">取消</el-button>
+      <el-button type="primary" :loading="batchSubmitting" @click="confirmImport">确认导入</el-button>
+    </template>
+  </el-dialog>
+
+  <!-- 单张订单详情（商品明细 + 错误） -->
+  <el-dialog v-model="orderErrorDialog" :title="'订单详情：' + (currentOrder ? currentOrder.supplierName : '')" width="720px" append-to-body>
+    <div v-if="currentOrder">
+      <el-alert v-if="currentOrder.errors.length" type="error" :closable="false" style="margin-bottom:12px;">
+        有 {{ currentOrder.errors.length }} 行错误，这些行不会导入。
+      </el-alert>
+      <div style="margin-bottom:8px;font-weight:bold;">商品明细（{{ currentOrder.items.length }} 条）</div>
+      <el-table :data="currentOrder.items" size="small" border max-height="240" style="margin-bottom:16px;">
+        <el-table-column label="条码" prop="barcode" width="140" />
+        <el-table-column label="商品名称" prop="name" min-width="160" />
+        <el-table-column label="单位" prop="unit" width="70" align="center" />
+        <el-table-column label="数量" prop="qty" width="80" align="right" />
+        <el-table-column label="进价" prop="costPrice" width="80" align="right" />
+        <el-table-column label="生产日期" width="120" align="center"><template #default="{ row }">{{ row.produceDate || '-' }}</template></el-table-column>
+      </el-table>
+      <template v-if="currentOrder.errors.length">
+        <div style="margin-bottom:8px;font-weight:bold;color:#f56c6c;">错误行（{{ currentOrder.errors.length }} 条）</div>
+        <el-table :data="currentOrder.errors" size="small" border max-height="160">
+          <el-table-column label="行号" prop="row" width="70" align="center" />
+          <el-table-column label="条码" prop="barcode" width="140" />
+          <el-table-column label="商品名称" prop="name" min-width="140" />
+          <el-table-column label="错误" prop="message" min-width="180" />
+        </el-table>
+      </template>
+    </div>
+    <template #footer>
+      <el-button @click="orderErrorDialog=false">关闭</el-button>
+    </template>
+  </el-dialog>
+
+  <!-- 未匹配供应商创建弹窗 -->
+  <el-dialog v-model="supplierCreateDialog" title="以下 Sheet 名称未匹配到供应商" width="600px" :close-on-click-modal="false">
+    <el-alert type="info" :closable="false" style="margin-bottom:14px;">
+      每个未匹配的 Sheet 对应一张进货单。可在此创建供应商后继续导入，或叉掉不需要的。
+    </el-alert>
+    <div v-for="(f, idx) in supplierForms" :key="idx" v-show="!f.closed" style="margin-bottom:14px;padding:14px;border:1px solid #ebeef5;border-radius:6px;position:relative;">
+      <el-button text type="danger" @click="f.closed = true" style="position:absolute;top:6px;right:6px;"><el-icon><Close /></el-icon></el-button>
+      <el-form label-width="70px" size="small">
+        <el-form-item label="供应商"><el-input v-model="f.name" style="width:300px;"></el-input></el-form-item>
+        <el-form-item label="联系人"><el-input v-model="f.contact" style="width:200px;"></el-input></el-form-item>
+        <el-form-item label="电话"><el-input v-model="f.phone" style="width:200px;"></el-input></el-form-item>
+        <el-form-item label="地址"><el-input v-model="f.address" style="width:360px;"></el-input></el-form-item>
+      </el-form>
+    </div>
+    <div v-if="supplierForms.every(f => f.closed)" class="muted" style="text-align:center;padding:20px 0;">所有未匹配 Sheet 已跳过，可点击「跳过并继续」。</div>
+    <template #footer>
+      <el-button @click="skipSuppliersAndContinue">跳过并继续</el-button>
+      <el-button type="primary" :loading="creatingSuppliers" @click="createSuppliersAndReimport">创建并重新导入</el-button>
+    </template>
+  </el-dialog>
+
+  <!-- 未匹配商品创建弹窗 -->
+  <el-dialog v-model="productCreateDialog" title="以下商品未匹配到，可创建后继续导入" width="640px" :close-on-click-modal="false">
+    <el-alert type="info" :closable="false" style="margin-bottom:14px;">
+      以下条码或商品名称在系统中不存在。可在此创建商品档案后继续导入，或叉掉不需要的。
+    </el-alert>
+    <div v-for="(f, idx) in productForms" :key="idx" v-show="!f.closed" style="margin-bottom:14px;padding:14px;border:1px solid #ebeef5;border-radius:6px;position:relative;">
+      <el-button text type="danger" @click="f.closed = true" style="position:absolute;top:6px;right:6px;"><el-icon><Close /></el-icon></el-button>
+      <el-form label-width="80px" size="small">
+        <el-form-item label="条码"><el-input v-model="f.barcode" style="width:200px;" placeholder="散装商品可留空"></el-input></el-form-item>
+        <el-form-item label="商品名称"><el-input v-model="f.name" style="width:280px;"></el-input></el-form-item>
+        <el-form-item label="规格"><el-input v-model="f.spec" style="width:160px;" placeholder="如 500g/袋"></el-input></el-form-item>
+        <el-form-item label="分类"><el-input v-model="f.categoryName" style="width:160px;"></el-input></el-form-item>
+        <el-form-item label="单位"><el-input v-model="f.unit" style="width:80px;"></el-input></el-form-item>
+        <el-form-item label="进价"><el-input v-model="f.costPrice" style="width:100px;" type="number"></el-input></el-form-item>
+        <el-form-item label="售价"><el-input v-model="f.salePrice" style="width:100px;" type="number" placeholder="留空自动1.3倍"></el-input></el-form-item>
+        <el-form-item label="散装称重"><el-switch v-model="f.isWeighted"></el-switch></el-form-item>
+      </el-form>
+    </div>
+    <div v-if="productForms.every(f => f.closed)" class="muted" style="text-align:center;padding:20px 0;">所有未匹配商品已跳过，可点击「跳过并继续」。</div>
+    <template #footer>
+      <el-button @click="skipProductsAndContinue">跳过并继续</el-button>
+      <el-button type="primary" :loading="creatingProducts" @click="createProductsAndReimport">创建并重新导入</el-button>
+    </template>
   </el-dialog>
 </div>
 
@@ -385,7 +505,7 @@ function pageSetup(deps) {
     if (!f.items.length) { toast('请添加商品', 'warning'); return; }
     submitting.value = true;
     try {
-      const payload = { supplierId: f.supplierId, details: f.items.map(i=>({ productId:i.id, name:i.name, qty:i.qty, costPrice:i.costPrice })), totalQty: f.items.reduce((s,i)=>s+Number(i.qty||0),0), totalAmount: f.items.reduce((s,i)=>s+Number(i.qty||0)*Number(i.costPrice||0),0) };
+      const payload = { supplierId: f.supplierId, details: f.items.map(i=>({ productId:i.id, name:i.name, qty:i.qty, costPrice:i.costPrice, produceDate: i.produceDate || null })), totalQty: f.items.reduce((s,i)=>s+Number(i.qty||0),0), totalAmount: f.items.reduce((s,i)=>s+Number(i.qty||0)*Number(i.costPrice||0),0) };
       let res;
       if (isEdit.value) {
         res = await api.put('/purchases/' + editingId.value, payload);
@@ -433,11 +553,205 @@ function pageSetup(deps) {
     if (ok) toast('已导出', 'success');
   }
 
+  // ---- Excel 批量导入 ----
+  const importing = ref(false);
+  const importPreviewDialog = ref(false);
+  const importOrders = ref([]);
+  const importSkipped = ref([]);
+  const importUnmatchedProducts = ref([]);   // 未匹配到的商品列表
+  const orderErrorDialog = ref(false);
+  const currentOrder = ref(null);
+  const batchSubmitting = ref(false);
+  const lastImportFile = ref(null);          // 保存文件引用，创建后重新解析
+  // 供应商
+  const supplierCreateDialog = ref(false);
+  const supplierForms = ref([]);             // [{ sheetName, name, contact, phone, address, closed }]
+  const creatingSuppliers = ref(false);
+  // 商品
+  const productCreateDialog = ref(false);
+  const productForms = ref([]);              // [{ barcode, name, spec, categoryName, unit, costPrice, salePrice, isWeighted, closed }]
+  const creatingProducts = ref(false);
+
+  async function downloadTemplate() {
+    const ok = await common.downloadExcel('/purchases/import/template', {}, '进货单导入模板.xlsx');
+    if (ok) toast('模板已下载', 'success');
+  }
+
+  async function importExcel(file) {
+    importing.value = true;
+    lastImportFile.value = file;
+    const fd = new FormData(); fd.append('file', file);
+    try {
+      const res = await api.post('/purchases/import/preview', fd);
+      importOrders.value = res.orders || [];
+      importSkipped.value = res.skippedSheets || [];
+      importUnmatchedProducts.value = res.unmatchedProducts || [];
+      // 多步流程：先处理未匹配供应商 → 再处理未匹配商品 → 最后预览
+      if ((res.unmatchedSheets || []).length) {
+        supplierForms.value = res.unmatchedSheets.map(name => ({
+          sheetName: name, name: name, contact: '', phone: '', address: '', closed: false
+        }));
+        supplierCreateDialog.value = true;
+      } else if (importUnmatchedProducts.value.length) {
+        showProductCreateDialog();
+      } else if (importOrders.value.length) {
+        showImportPreview();
+      } else {
+        toast('未解析到有效进货单', 'warning');
+      }
+    } catch(e) {}
+    finally { importing.value = false; }
+    return false;
+  }
+
+  function showImportPreview() {
+    if (importOrders.value.length) {
+      importPreviewDialog.value = true;
+    } else {
+      toast('没有可导入的进货单', 'warning');
+    }
+  }
+
+  // 供应商创建弹窗：跳过 → 检查是否有未匹配商品 → 或直接预览
+  function skipSuppliersAndContinue() {
+    supplierCreateDialog.value = false;
+    if (importUnmatchedProducts.value.length) {
+      showProductCreateDialog();
+    } else if (importOrders.value.length) {
+      showImportPreview();
+    } else {
+      toast('没有可导入的进货单', 'warning');
+    }
+  }
+
+  async function createSuppliersAndReimport() {
+    const forms = supplierForms.value.filter(f => !f.closed && f.name.trim());
+    if (!forms.length) {
+      toast('没有要创建的供应商，可点「跳过并继续」', 'warning');
+      return;
+    }
+    creatingSuppliers.value = true;
+    let okCount = 0, failCount = 0;
+    for (const f of forms) {
+      try {
+        await api.post('/suppliers', { name: f.name.trim(), contact: f.contact, phone: f.phone, address: f.address, status: '启用' });
+        okCount++;
+      } catch(e) { failCount++; }
+    }
+    creatingSuppliers.value = false;
+    if (failCount) {
+      toast('成功创建 ' + okCount + ' 个，失败 ' + failCount + ' 个', 'warning');
+    } else {
+      toast('已创建 ' + okCount + ' 个供应商，正在重新解析', 'success');
+    }
+    supplierCreateDialog.value = false;
+    if (lastImportFile.value) await importExcel(lastImportFile.value);
+  }
+
+  // 商品创建弹窗
+  function showProductCreateDialog() {
+    productForms.value = importUnmatchedProducts.value.map(p => ({
+      barcode: p.barcode || '',
+      name: p.name || '',
+      spec: p.spec || '',
+      categoryName: p.category || '未分类',
+      unit: p.barcode ? '件' : '斤',
+      costPrice: String(p.price || ''),
+      salePrice: '',
+      isWeighted: !p.barcode,
+      closed: false,
+    }));
+    productCreateDialog.value = true;
+  }
+
+  async function createProductsAndReimport() {
+    const forms = productForms.value.filter(f => !f.closed && f.name.trim());
+    if (!forms.length) {
+      toast('没有要创建的商品，可点「跳过并继续」', 'warning');
+      return;
+    }
+    creatingProducts.value = true;
+    let okCount = 0, failCount = 0;
+    for (const f of forms) {
+      try {
+        const cost = Number(f.costPrice) || 0;
+        const sale = Number(f.salePrice) || Math.round(cost * 1.3 * 100) / 100 || 0;
+        await api.post('/products', {
+          barcode: (f.barcode || '').trim(), name: f.name,
+          spec: (f.spec || '').trim(),
+          costPrice: cost, salePrice: sale,
+          unit: f.unit || (f.isWeighted ? '斤' : '件'),
+          stockQuantity: 0, safetyStock: 0,
+          categoryName: f.categoryName || '未分类', status: '上架',
+          isWeighted: !!f.isWeighted,
+        });
+        okCount++;
+      } catch(e) { failCount++; }
+    }
+    creatingProducts.value = false;
+    if (failCount) {
+      toast('成功创建 ' + okCount + ' 个商品，失败 ' + failCount + ' 个', 'warning');
+    } else {
+      toast('已创建 ' + okCount + ' 个商品，正在重新解析', 'success');
+    }
+    productCreateDialog.value = false;
+    if (lastImportFile.value) await importExcel(lastImportFile.value);
+  }
+
+  function skipProductsAndContinue() {
+    productCreateDialog.value = false;
+    if (importOrders.value.length) {
+      showImportPreview();
+    } else {
+      toast('没有可导入的进货单', 'warning');
+    }
+  }
+
+  function viewOrderErrors(idx) {
+    currentOrder.value = importOrders.value[idx];
+    orderErrorDialog.value = true;
+  }
+
+  async function confirmImport() {
+    // 仅提交无错误的订单
+    const validOrders = importOrders.value.filter(o => !o.errors.length && o.items.length);
+    if (!validOrders.length) {
+      toast('没有可导入的进货单（全部含错误）', 'warning');
+      return;
+    }
+    batchSubmitting.value = true;
+    try {
+      const payload = validOrders.map(o => ({
+        supplierId: o.supplierId,
+        details: o.items.map(d => ({ productId: d.productId, name: d.name, qty: Number(d.qty), costPrice: Number(d.costPrice), produceDate: d.produceDate || null })),
+        totalQty: o.totalQty,
+        totalAmount: o.totalAmount,
+      }));
+      const res = await api.post('/purchases/batch', payload);
+      const okCount = (res.created || []).length;
+      const failCount = (res.failed || []).length;
+      if (failCount) {
+        toast('成功 ' + okCount + ' 张，失败 ' + failCount + ' 张，请查看失败明细', 'warning');
+      } else {
+        toast('批量导入完成：' + okCount + ' 张进货单', 'success');
+      }
+      importPreviewDialog.value = false;
+      load();
+    } catch(e) {}
+    finally { batchSubmitting.value = false; }
+  }
+
   onMounted(load);
   return { list, loading, keyword, dateFrom, dateTo, page, pageSize, total, load, search,
     suppliers, createDialog, submitting, isEdit, form, pickKw, pickList, pickSearched, detailDialog, detail,
     onOpen, openCreate, openEdit, searchPick, addPick, submit, doVoid, viewDetail, exportCsv, exportExcel,
     weighDialog, weighProduct, weighQty, weighPrice, confirmWeigh, common, toast,
-    npDialog, npBarcodeLocked, npLoading, npSource, npHint, npForm, npSave };
+    npDialog, npBarcodeLocked, npLoading, npSource, npHint, npForm, npSave,
+    importing, importPreviewDialog, importOrders, importSkipped, orderErrorDialog, currentOrder,
+    batchSubmitting, downloadTemplate, importExcel, viewOrderErrors, confirmImport,
+    supplierCreateDialog, supplierForms, creatingSuppliers, createSuppliersAndReimport, showImportPreview,
+    skipSuppliersAndContinue,
+    productCreateDialog, productForms, creatingProducts, showProductCreateDialog,
+    createProductsAndReimport, skipProductsAndContinue };
 }
 </script>

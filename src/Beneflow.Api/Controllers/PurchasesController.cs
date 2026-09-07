@@ -30,4 +30,20 @@ public class PurchasesController : BaseApiController
     /// <summary>编辑进货单：作废旧单 + 新增新单，支持修改数量/进价/备注</summary>
     [HttpPut("{id:int}")]
     public Task<ApiResult<object>> Update(int id, [FromBody] CreatePurchaseDto dto) => _svc.UpdateAsync(id, dto);
+
+    /// <summary>解析进货单导入 Excel，返回预览明细和错误（不写库）</summary>
+    [HttpPost("import/preview")]
+    public async Task<ApiResult<object>> ImportPreview(IFormFile file) => await _svc.ParseImportAsync(file);
+
+    /// <summary>批量创建进货单：入参为多张进货单 DTO</summary>
+    [HttpPost("batch")]
+    public async Task<ApiResult<object>> CreateBatch([FromBody] List<CreatePurchaseDto> dtos) => await _svc.CreateBatchAsync(dtos);
+
+    /// <summary>下载进货单导入模板 .xlsx</summary>
+    [HttpGet("import/template")]
+    public IActionResult ImportTemplate()
+    {
+        var bytes = _svc.BuildImportTemplate();
+        return File(bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "进货单导入模板.xlsx");
+    }
 }

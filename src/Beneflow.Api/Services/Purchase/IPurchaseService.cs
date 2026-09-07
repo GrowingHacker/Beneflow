@@ -1,4 +1,5 @@
 using Beneflow.Api.Models;
+using Microsoft.AspNetCore.Http;
 
 namespace Beneflow.Api.Services;
 
@@ -16,4 +17,13 @@ public interface IPurchaseService
     Task<ApiResult<object>> CreateReturnAsync(CreatePurchaseReturnDto dto);
     /// <summary>进货单全量导出（按 keyword/dateFrom/dateTo 筛选，不分页）</summary>
     Task<List<Dictionary<string, object?>>> ExportListAsync(string? keyword, string? dateFrom, string? dateTo);
+
+    /// <summary>解析进货单导入 Excel，返回预览明细和错误（不写库）</summary>
+    Task<ApiResult<object>> ParseImportAsync(IFormFile file);
+
+    /// <summary>批量创建进货单：逐张调用 CreateAsync（各自独立事务），返回成功/失败明细</summary>
+    Task<ApiResult<object>> CreateBatchAsync(List<CreatePurchaseDto> dtos);
+
+    /// <summary>生成进货单导入模板 .xlsx</summary>
+    byte[] BuildImportTemplate();
 }

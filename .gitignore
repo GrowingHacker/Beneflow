@@ -38,12 +38,10 @@ appsettings.Production.json
 .vscode/
 *.swp
 
-## TRAE 平台临时文件
-.trae-html-share-packages/
-
-## 临时生成的报告（不入库）
-上线前测试报告.html
 
 ## OS
 Thumbs.db
 .DS_Store
+
+## scripts
+*.py
