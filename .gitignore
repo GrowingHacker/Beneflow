@@ -45,3 +45,6 @@ Thumbs.db
 
 ## scripts
 *.py
+
+## other
+*.xlsx
