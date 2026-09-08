@@ -29,4 +29,9 @@
     <PackageReference Include="ClosedXML" Version="0.104.2" />
   </ItemGroup>
 
+  <!-- 集成测试项目需要访问顶层语句生成的 internal Program 类 -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Beneflow.Tests" />
+  </ItemGroup>
+
 </Project>

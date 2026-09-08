@@ -201,14 +201,7 @@ public static class DbSeeder
             qty[p.Id] += change;
         }
 
-        // 期初 = 当前库存 + 已售 − 已购（保证回放后恰好等于当前库存）
-        var openings = new Dictionary<int, decimal> { [1] = 1, [2] = 69, [3] = 91, [4] = 12, [5] = 56, [6] = 5, [7] = 50, [8] = 3 }; // products 序号从 1 起
-        foreach (var op in openings)
-        {
-            LogStock(products[op.Key - 1], op.Value, "期初建账", "INIT", admin.Id, DateTime.Parse("2026-08-01 08:00"));
-        }
-
-        // 进货单
+        // 进货/销售事件定义（先于期初建账计算，供按实际事件动态推导期初金额）
         var buyerId = buyer.Id;
         var poDefs = new (DateTime At, Supplier Sup, (Product P, decimal Qty, decimal Cost)[] Lines)[]
         {
@@ -222,6 +215,30 @@ public static class DbSeeder
                 (products[1], 200m, 1.40m), (products[2], 100m, 1.80m), (products[5], 30m, 8.00m),
             }),
         };
+        var sales = new (DateTime At, UserInfo By, string Pay, bool Credit, string? Wx, decimal Discount, decimal CashGot, (Product P, decimal Qty)[] Lines)[]
+        {
+            (DateTime.Parse("2026-08-18 11:20"), admin, "赊账", true, "wx_li666", 0m, 0m, new[]{ (products[1], 24m) }),              // 60.00 已结清
+            (DateTime.Parse("2026-08-25 16:48"), admin, "赊账", true, "wx_abc123", 0m, 0m, new[]{ (products[2], 40m) }),             // 120.00 未结清
+            (DateTime.Parse("2026-08-26 09:12"), cashier, "现金", false, null, 0m, 50m, new[]{ (products[4], 5m), (products[1], 2m), (products[2], 1m) }),   // 45.50 找零 4.50
+            (DateTime.Parse("2026-08-26 10:35"), cashier, "微信", false, null, 3m, 0m, new[]{ (products[0], 1m), (products[3], 4m), (products[1], 3m), (products[4], 1m) }), // 88-3=85
+        };
+
+        // 期初 = 当前库存 + 已售 − 已购（保证回放后恰好等于当前库存）。
+        // 按实际进货/销售事件动态算出每个商品的期初建账金额，覆盖全部商品（含散装称重等
+        // 没有显式进货/销售事件、仅靠期初体现库存的商品），避免写死子集导致回放终值不一致。
+        var totalPurchased = poDefs.SelectMany(d => d.Lines)
+            .GroupBy(l => l.P.Id).ToDictionary(g => g.Key, g => g.Sum(l => l.Qty));
+        var totalSold = sales.SelectMany(s => s.Lines)
+            .GroupBy(l => l.P.Id).ToDictionary(g => g.Key, g => g.Sum(l => l.Qty));
+        foreach (var p in products)
+        {
+            var opening = p.StockQuantity
+                + totalSold.GetValueOrDefault(p.Id, 0m)
+                - totalPurchased.GetValueOrDefault(p.Id, 0m);
+            LogStock(p, opening, "期初建账", "INIT", admin.Id, DateTime.Parse("2026-08-01 08:00"));
+        }
+
+        // 进货单
         for (var i = 0; i < poDefs.Length; i++)
         {
             var def = poDefs[i];
@@ -247,13 +264,6 @@ public static class DbSeeder
         }
 
         // 销售单（含赊账两条：一条已结清、一条未结清）
-        var sales = new (DateTime At, UserInfo By, string Pay, bool Credit, string? Wx, decimal Discount, decimal CashGot, (Product P, decimal Qty)[] Lines)[]
-        {
-            (DateTime.Parse("2026-08-18 11:20"), admin, "赊账", true, "wx_li666", 0m, 0m, new[]{ (products[1], 24m) }),              // 60.00 已结清
-            (DateTime.Parse("2026-08-25 16:48"), admin, "赊账", true, "wx_abc123", 0m, 0m, new[]{ (products[2], 40m) }),             // 120.00 未结清
-            (DateTime.Parse("2026-08-26 09:12"), cashier, "现金", false, null, 0m, 50m, new[]{ (products[4], 5m), (products[1], 2m), (products[2], 1m) }),   // 45.50 找零 4.50
-            (DateTime.Parse("2026-08-26 10:35"), cashier, "微信", false, null, 3m, 0m, new[]{ (products[0], 1m), (products[3], 4m), (products[1], 3m), (products[4], 1m) }), // 88-3=85
-        };
         for (var i = 0; i < sales.Length; i++)
         {
             var s = sales[i];
