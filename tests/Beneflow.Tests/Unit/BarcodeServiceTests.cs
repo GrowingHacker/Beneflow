@@ -4,7 +4,7 @@ using Beneflow.Api.Services;
 using Beneflow.Api.Utils;
 using Microsoft.Extensions.Logging.Abstractions;
 
-namespace Beneflow.Tests;
+namespace Beneflow.Tests.Unit;
 
 /// <summary>条码联网查询测试：用假 HttpClient 拦截双源请求，覆盖主流程与边界</summary>
 public class BarcodeServiceTests : TestBase

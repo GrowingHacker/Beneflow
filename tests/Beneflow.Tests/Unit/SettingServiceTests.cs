@@ -2,7 +2,7 @@ using System.Text.Json;
 using Beneflow.Api.Utils;
 using Microsoft.EntityFrameworkCore;
 
-namespace Beneflow.Tests;
+namespace Beneflow.Tests.Unit;
 
 /// <summary>系统设置测试：默认回放、分组落库、API Key 加解密与脱敏、备份目录、非法参数</summary>
 public class SettingServiceTests : TestBase

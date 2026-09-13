@@ -10,6 +10,7 @@ public class CreditsController : BaseApiController
     private readonly ISaleService _svc;
     public CreditsController(ISaleService svc) => _svc = svc;
 
+    /// <summary>赊账记录列表（按关键词/状态/日期筛选，分页）</summary>
     [HttpGet]
     public async Task<ApiResult<object>> List(
         [FromQuery] string? keyword, [FromQuery] string? status,

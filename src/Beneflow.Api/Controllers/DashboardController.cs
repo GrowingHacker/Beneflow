@@ -13,6 +13,7 @@ public class DashboardController : BaseApiController
     public DashboardController(IReportService reports, ITlsCertService tls)
     { _reports = reports; _tls = tls; }
 
+    /// <summary>首页看板汇总：今日营业额/单量、库存预警、临期提醒等</summary>
     [HttpGet("summary")]
     public async Task<ApiResult<object>> Summary()
     {
@@ -20,6 +21,7 @@ public class DashboardController : BaseApiController
         return ApiResult<object>.Ok(await _reports.DashboardSummaryAsync(expiryDays));
     }
 
+    /// <summary>手机端进货页访问地址（局域网 IP；TLS 就绪时优先 https:5001）</summary>
     [HttpGet("mobile-url")]
     public ApiResult<object> MobileUrl()
     {

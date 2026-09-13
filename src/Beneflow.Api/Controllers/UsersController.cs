@@ -10,11 +10,13 @@ public class UsersController : BaseApiController
     private readonly IUserService _svc;
     public UsersController(IUserService svc) => _svc = svc;
 
+    /// <summary>用户列表（按关键词搜索，分页）</summary>
     [HttpGet]
     public async Task<ApiResult<PagedResult<object>>> List(
         [FromQuery] string? keyword, [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
         => ApiResult<PagedResult<object>>.Ok(await _svc.ListAsync(keyword, page, pageSize));
 
+    /// <summary>新增用户；需指定角色</summary>
     [HttpPost]
     public Task<ApiResult<object>> Create([FromBody] UserCreateDto dto) => _svc.CreateAsync(dto);
 
@@ -28,6 +30,7 @@ public class UsersController : BaseApiController
     public async Task<ApiResult> Toggle(int id, [FromBody] StatusBody body)
         => await _svc.ToggleAsync(id, body.Status ?? "禁用");
 
+    /// <summary>删除用户</summary>
     [HttpDelete("{id:int}")]
     public Task<ApiResult> Delete(int id) => _svc.DeleteAsync(id);
 

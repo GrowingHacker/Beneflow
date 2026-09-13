@@ -2,7 +2,7 @@ using System.Text.Json;
 using Beneflow.Api.Models;
 using Beneflow.Api.Utils;
 
-namespace Beneflow.Tests;
+namespace Beneflow.Tests.Unit;
 
 /// <summary>纯工具类测试：密码哈希、拼音码、AES 加解密/脱敏、统一响应包装</summary>
 public class UtilsTests : TestBase

@@ -11,14 +11,17 @@ public class SuppliersController : BaseApiController
     private readonly ISupplierService _svc;
     public SuppliersController(ISupplierService svc) => _svc = svc;
 
+    /// <summary>供应商列表（按关键词搜索，分页）</summary>
     [HttpGet]
     public async Task<ApiResult<PagedResult<object>>> List(
         [FromQuery] string? keyword, [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
         => ApiResult<PagedResult<object>>.Ok(await _svc.ListAsync(keyword, page, pageSize));
 
+    /// <summary>供应商详情</summary>
     [HttpGet("{id:int}")]
     public Task<ApiResult<object>> Get(int id) => _svc.GetAsync(id);
 
+    /// <summary>新增供应商</summary>
     [HttpPost]
     public Task<ApiResult<object>> Create([FromBody] SupplierUpsertDto dto) => _svc.CreateAsync(dto);
 
@@ -26,6 +29,7 @@ public class SuppliersController : BaseApiController
     [HttpPut("{id:int}")]
     public Task<ApiResult> Update(int id, [FromBody] JsonElement body) => _svc.UpdateAsync(id, body);
 
+    /// <summary>删除供应商</summary>
     [HttpDelete("{id:int}")]
     public Task<ApiResult> Delete(int id) => _svc.DeleteAsync(id);
 }

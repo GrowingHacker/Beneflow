@@ -18,6 +18,7 @@ public class StocksController : BaseApiController
         => ApiResult<object>.Ok(await _svc.InventoryListAsync(keyword, status, page, pageSize));
 
     // ---------- 盘点 ----------
+    /// <summary>盘点单列表（分页）</summary>
     [HttpGet("check")]
     public async Task<ApiResult<PagedResult<object>>> CheckList(
         [FromQuery] int page = 1, [FromQuery] int pageSize = 20)

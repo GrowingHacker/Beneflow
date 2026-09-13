@@ -104,7 +104,6 @@ public class SystemConfig
 {
     public int Id { get; set; }
     /// <summary>参数键：shop / sale / receipt / stock / units / payMethods</summary>
-    [System.ComponentModel.DataAnnotations.MaxLength(50)]
     public string ConfigKey { get; set; } = "";
     public string ConfigValue { get; set; } = "";
     public DateTime UpdatedAt { get; set; } = DateTime.Now;

@@ -2,7 +2,7 @@ using Beneflow.Api.Models;
 using Beneflow.Api.Models.Entities;
 using Microsoft.EntityFrameworkCore;
 
-namespace Beneflow.Tests;
+namespace Beneflow.Tests.Unit;
 
 /// <summary>
 /// 用户管理单元测试：创建校验（用户名/密码/手机号/角色/重名）、编辑权限、启停、删除保护。

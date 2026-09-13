@@ -2,7 +2,7 @@ using Beneflow.Api.Models;
 using Beneflow.Api.Models.Entities;
 using Microsoft.EntityFrameworkCore;
 
-namespace Beneflow.Tests;
+namespace Beneflow.Tests.Unit;
 
 /// <summary>操作日志测试：写入内容、关键字/时间筛选、分页边界</summary>
 public class LogServiceTests : TestBase

@@ -2,7 +2,7 @@ using Beneflow.Api.Models;
 using Beneflow.Api.Models.Entities;
 using Microsoft.EntityFrameworkCore;
 
-namespace Beneflow.Tests;
+namespace Beneflow.Tests.Unit;
 
 /// <summary>
 /// 商品档案与分类单元测试：新增（条码/价格/自动分类）、局部更新、软删除、分类 CRUD。

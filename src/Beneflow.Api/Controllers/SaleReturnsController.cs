@@ -10,6 +10,7 @@ public class SaleReturnsController : BaseApiController
     private readonly ISaleService _svc;
     public SaleReturnsController(ISaleService svc) => _svc = svc;
 
+    /// <summary>销售退货单列表（按关键词筛选，分页）</summary>
     [HttpGet]
     public async Task<ApiResult<PagedResult<object>>> List(
         [FromQuery] string? keyword, [FromQuery] int page = 1, [FromQuery] int pageSize = 20)

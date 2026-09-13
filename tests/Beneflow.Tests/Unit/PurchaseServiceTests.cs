@@ -2,7 +2,7 @@
 using Beneflow.Api.Models.Entities;
 using Microsoft.EntityFrameworkCore;
 
-namespace Beneflow.Tests;
+namespace Beneflow.Tests.Unit;
 
 /// <summary>
 /// 采购进货单单元测试：创建、作废、编辑，及边界场景。

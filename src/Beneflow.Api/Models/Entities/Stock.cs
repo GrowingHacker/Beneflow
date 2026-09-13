@@ -6,14 +6,12 @@ public class StockLog
     public long Id { get; set; }
     public int ProductId { get; set; }
     /// <summary>变动类型：期初建账/采购入库/采购退货出库/销售出库/销售退货入库/盘点调整</summary>
-    [System.ComponentModel.DataAnnotations.StringLength(20)]
     public string ChangeType { get; set; } = "";
     /// <summary>变动数量（正负）</summary>
     public decimal ChangeQty { get; set; }
     public decimal BeforeQty { get; set; }
     public decimal AfterQty { get; set; }
     /// <summary>关联单号</summary>
-    [System.ComponentModel.DataAnnotations.StringLength(30)]
     public string RefNo { get; set; } = "";
     public int CreatedBy { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.Now;
@@ -26,7 +24,6 @@ public class StockCheck
 {
     public int Id { get; set; }
     /// <summary>盘点单号，唯一：SC + 日期 + 序号</summary>
-    [System.ComponentModel.DataAnnotations.StringLength(20)]
     public string OrderNo { get; set; } = "";
     /// <summary>盘点范围：全部商品/仅临期商品…</summary>
     public string Range { get; set; } = "全部商品";

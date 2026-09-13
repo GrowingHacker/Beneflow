@@ -1,7 +1,7 @@
 using Beneflow.Api.Models.Entities;
 using Microsoft.EntityFrameworkCore;
 
-namespace Beneflow.Tests;
+namespace Beneflow.Tests.Unit;
 
 /// <summary>
 /// 角色与权限分配单元测试：角色 CRUD、删除保护、权限整组重写、权限码读取。

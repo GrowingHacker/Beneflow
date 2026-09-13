@@ -16,12 +16,10 @@ public class Product
 {
     public int Id { get; set; }
     /// <summary>条码，唯一；可空时由店内自动生成店内码</summary>
-    [System.ComponentModel.DataAnnotations.StringLength(20)]
     public string Barcode { get; set; } = "";
     public string Name { get; set; } = "";
     public int CategoryId { get; set; }
     /// <summary>单位：瓶/包/罐…</summary>
-    [System.ComponentModel.DataAnnotations.StringLength(10)]
     public string Unit { get; set; } = "";
     public string? Spec { get; set; }
     /// <summary>销售价</summary>
@@ -32,7 +30,6 @@ public class Product
     public decimal StockQuantity { get; set; }
     /// <summary>安全库存（低于触发补货提醒）</summary>
     public decimal SafetyStock { get; set; }
-    [System.ComponentModel.DataAnnotations.StringLength(200)]
     public string? ImageUrl { get; set; }
     /// <summary>是否有效期管理</summary>
     public bool HasExpiry { get; set; }
@@ -41,7 +38,6 @@ public class Product
     /// <summary>是否称重商品（散装称重，按斤/公斤计价，无条码）</summary>
     public bool IsWeighted { get; set; }
     /// <summary>拼音码（名称拼音首字母，用于收银快速搜索）</summary>
-    [System.ComponentModel.DataAnnotations.StringLength(20)]
     public string PinyinCode { get; set; } = "";
     /// <summary>状态：true=上架 / false=下架</summary>
     public bool Status { get; set; } = true;

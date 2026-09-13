@@ -15,6 +15,7 @@ public class MenusController : BaseApiController
     public async Task<ApiResult<List<object>>> Tree() =>
         ApiResult<List<object>>.Ok(await _svc.TreeAsync());
 
+    /// <summary>新增菜单；「菜单/按钮」类型必须填写权限码</summary>
     [HttpPost]
     public async Task<ApiResult<object>> Create([FromBody] MenuBody b)
     {
@@ -25,6 +26,7 @@ public class MenusController : BaseApiController
         return await _svc.CreateAsync(b.Name.Trim(), b.Type.Trim(), b.PermCode, b.ParentId, b.Sort);
     }
 
+    /// <summary>修改菜单名称、权限码与排序</summary>
     [HttpPut("{id:int}")]
     public async Task<ApiResult> Update(int id, [FromBody] MenuBody b)
     {
@@ -33,6 +35,7 @@ public class MenusController : BaseApiController
         return await _svc.UpdateAsync(id, b.Name.Trim(), b.PermCode, b.Sort);
     }
 
+    /// <summary>删除菜单</summary>
     [HttpDelete("{id:int}")]
     public Task<ApiResult> Delete(int id) => _svc.DeleteAsync(id);
 

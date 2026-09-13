@@ -10,12 +10,14 @@ public class PurchasesController : BaseApiController
     private readonly IPurchaseService _svc;
     public PurchasesController(IPurchaseService svc) => _svc = svc;
 
+    /// <summary>进货单列表（按关键词/日期筛选，分页）</summary>
     [HttpGet]
     public async Task<ApiResult<PagedResult<object>>> List(
         [FromQuery] string? keyword, [FromQuery] string? dateFrom, [FromQuery] string? dateTo,
         [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
         => ApiResult<PagedResult<object>>.Ok(await _svc.ListAsync(keyword, dateFrom, dateTo, page, pageSize));
 
+    /// <summary>进货单详情（含明细行与供应商）</summary>
     [HttpGet("{id:int}")]
     public Task<ApiResult<object>> Detail(int id) => _svc.GetDetailAsync(id);
 

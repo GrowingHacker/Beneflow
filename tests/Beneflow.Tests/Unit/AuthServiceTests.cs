@@ -1,7 +1,7 @@
 using Beneflow.Api.Models.Entities;
 using Microsoft.EntityFrameworkCore;
 
-namespace Beneflow.Tests;
+namespace Beneflow.Tests.Unit;
 
 /// <summary>
 /// 认证与账号安全单元测试：登录（含连续失败锁定）、权限码下发、修改密码。

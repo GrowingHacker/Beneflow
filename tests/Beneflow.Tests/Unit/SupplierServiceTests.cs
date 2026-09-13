@@ -2,7 +2,7 @@ using Beneflow.Api.Models;
 using Beneflow.Api.Models.Entities;
 using Microsoft.EntityFrameworkCore;
 
-namespace Beneflow.Tests;
+namespace Beneflow.Tests.Unit;
 
 /// <summary>
 /// 供应商管理单元测试：列表统计（累计采购/最近供货）、重名校验、更新、删除保护。

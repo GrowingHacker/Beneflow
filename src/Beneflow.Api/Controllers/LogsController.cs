@@ -11,6 +11,7 @@ public class LogsController : BaseApiController
     private readonly ILogService _svc;
     public LogsController(ILogService svc) => _svc = svc;
 
+    /// <summary>操作日志列表（按关键词/日期筛选，分页；日志只读不可删除）</summary>
     [HttpGet]
     public async Task<ApiResult<PagedResult<object>>> List(
         [FromQuery] string? keyword, [FromQuery] string? dateFrom, [FromQuery] string? dateTo,

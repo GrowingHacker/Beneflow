@@ -2,7 +2,7 @@ using Beneflow.Api.Models;
 using Beneflow.Api.Models.Entities;
 using Microsoft.EntityFrameworkCore;
 
-namespace Beneflow.Tests;
+namespace Beneflow.Tests.Unit;
 
 /// <summary>
 /// 销售管理单元测试：收银结算、作废回补、销售退货、赊账还款与统计。

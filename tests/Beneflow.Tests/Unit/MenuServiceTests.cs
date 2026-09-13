@@ -2,7 +2,7 @@ using Beneflow.Api.Models.Entities;
 using Beneflow.Api.Services;
 using Microsoft.EntityFrameworkCore;
 
-namespace Beneflow.Tests;
+namespace Beneflow.Tests.Unit;
 
 /// <summary>
 /// 菜单维护单元测试：Sort→目录归属映射、树形组装、增删改与删除保护。

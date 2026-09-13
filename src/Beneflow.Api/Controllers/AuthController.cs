@@ -26,6 +26,7 @@ public class AuthController : BaseApiController
         _db = db;
     }
 
+    /// <summary>登录换取 JWT token；用户名或密码连续错误会锁定账号</summary>
     [HttpPost("login")]
     [AllowAnonymous]
     public async Task<ApiResult<object>> Login([FromBody] LoginDto dto)
@@ -34,10 +35,12 @@ public class AuthController : BaseApiController
         return result;
     }
 
+    /// <summary>修改当前登录用户的密码（校验原密码；新密码≥6位且含数字和字母）</summary>
     [HttpPost("change-password")]
     public async Task<ApiResult> ChangePassword([FromBody] ChangePasswordDto dto)
         => await _auth.ChangePasswordAsync(UserId(), dto.OldPassword, dto.NewPassword);
 
+    /// <summary>退出登录：仅记一条操作日志（JWT 无状态，服务端不维护会话）</summary>
     [HttpPost("logout")]
     public async Task<ApiResult> Logout()
     {

@@ -5,7 +5,6 @@ public class PurchaseOrder
 {
     public int Id { get; set; }
     /// <summary>进货单号，唯一：PO + 日期 + 序号</summary>
-    [System.ComponentModel.DataAnnotations.StringLength(20)]
     public string OrderNo { get; set; } = "";
     public int SupplierId { get; set; }
     public decimal TotalQty { get; set; }
@@ -37,7 +36,6 @@ public class PurchaseOrderDetail
 public class PurchaseReturn
 {
     public int Id { get; set; }
-    [System.ComponentModel.DataAnnotations.StringLength(20)]
     public string OrderNo { get; set; } = "";
     public int SupplierId { get; set; }
     /// <summary>应退款项金额</summary>
@@ -65,20 +63,17 @@ public class SaleOrder
 {
     public int Id { get; set; }
     /// <summary>销售单号，唯一：SO + 日期 + 序号</summary>
-    [System.ComponentModel.DataAnnotations.StringLength(20)]
     public string OrderNo { get; set; } = "";
     public decimal TotalAmount { get; set; }
     public decimal DiscountAmount { get; set; }
     /// <summary>实收金额</summary>
     public decimal PayAmount { get; set; }
     /// <summary>收款方式：现金/微信/支付宝/赊账</summary>
-    [System.ComponentModel.DataAnnotations.StringLength(20)]
     public string PayMethod { get; set; } = "现金";
     public decimal CashAmount { get; set; }
     public decimal ChangeAmount { get; set; }
     public bool IsCredit { get; set; }
     /// <summary>赊账顾客微信号（欠款标识）</summary>
-    [System.ComponentModel.DataAnnotations.StringLength(50)]
     public string? WechatId { get; set; }
     public string? Remark { get; set; }
     /// <summary>作废标记：true 表示该订单已作废（不入销售额/订单数/毛利统计）</summary>
@@ -95,7 +90,6 @@ public class SaleOrderDetail
     public int ProductId { get; set; }
     /// <summary>商品名称快照（退货页按名称回带）</summary>
     public string ProductName { get; set; } = "";
-    [System.ComponentModel.DataAnnotations.StringLength(20)]
     public string Barcode { get; set; } = "";
     public decimal Quantity { get; set; }
     public decimal UnitPrice { get; set; }
@@ -112,7 +106,6 @@ public class SaleOrderDetail
 public class SaleReturn
 {
     public int Id { get; set; }
-    [System.ComponentModel.DataAnnotations.StringLength(20)]
     public string OrderNo { get; set; } = "";
     public int SaleOrderId { get; set; }
     /// <summary>退款方式：原路退回/现金/微信/支付宝</summary>
@@ -142,9 +135,7 @@ public class CreditSale
 {
     public int Id { get; set; }
     public int SaleOrderId { get; set; }
-    [System.ComponentModel.DataAnnotations.StringLength(50)]
     public string WechatId { get; set; } = "";
-    [System.ComponentModel.DataAnnotations.StringLength(20)]
     public string? Phone { get; set; }
     public string? Remark { get; set; }
     public decimal CreditAmount { get; set; }
@@ -165,7 +156,6 @@ public class CreditPayment
     public int CreditSaleId { get; set; }
     public decimal PayAmount { get; set; }
     /// <summary>还款方式：微信/现金/支付宝</summary>
-    [System.ComponentModel.DataAnnotations.StringLength(20)]
     public string PayMethod { get; set; } = "微信";
     public int CreatedBy { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.Now;

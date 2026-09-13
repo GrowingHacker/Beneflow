@@ -63,9 +63,12 @@ public abstract class TestBase : IDisposable
         CurrentUser = new FakeCurrentUser { Id = 1, Username = "testuser", ClientIp = "127.0.0.1" };
         Logs = new LogService(Db, CurrentUser);
 
-        PurchaseSvc = new PurchaseService(Db, CurrentUser);
-        SaleSvc = new SaleService(Db, CurrentUser);
-        StockSvc = new StockService(Db, CurrentUser);
+        // 库存变更锁：单测是单线程的，共享一个实例即可
+        // （互斥量本身是静态的，跨实例也共享同一批信号量，不影响并发测试）。
+        var stockLock = new StockMutationLock();
+        PurchaseSvc = new PurchaseService(Db, CurrentUser, stockLock);
+        SaleSvc = new SaleService(Db, CurrentUser, stockLock);
+        StockSvc = new StockService(Db, CurrentUser, stockLock);
         ProductSvc = new ProductService(Db, CurrentUser, Logs);
         ReportSvc = new ReportService(Db);
         UserSvc = new UserService(Db, CurrentUser, Logs, new AccountStatusCache());

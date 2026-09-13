@@ -9,6 +9,10 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>Beneflow.Api</RootNamespace>
     <AssemblyName>Beneflow.Api</AssemblyName>
+    <!-- 生成 XML 文档注释文件，供 Swagger 读取：控制器/模型上的 /// 说明会出现在接口文档里。
+         未写注释的公开成员不报 CS1591，避免为了消警告去写废话注释。 -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);1591</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
@@ -27,6 +31,7 @@
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="8.0.0" />
     <!-- Excel 导出：ClosedXML 基于 OpenXML 封装，API 简洁，MIT 协议可商用 -->
     <PackageReference Include="ClosedXML" Version="0.104.2" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.6.2" />
   </ItemGroup>
 
   <!-- 集成测试项目需要访问顶层语句生成的 internal Program 类 -->

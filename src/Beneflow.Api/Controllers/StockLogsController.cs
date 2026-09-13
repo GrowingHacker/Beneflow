@@ -11,6 +11,7 @@ public class StockLogsController : BaseApiController
     private readonly IStockService _svc;
     public StockLogsController(IStockService svc) => _svc = svc;
 
+    /// <summary>库存流水列表（按关键词/变动类型筛选，分页）</summary>
     [HttpGet]
     public async Task<ApiResult<PagedResult<object>>> List(
         [FromQuery] string? keyword, [FromQuery] string? changeType,

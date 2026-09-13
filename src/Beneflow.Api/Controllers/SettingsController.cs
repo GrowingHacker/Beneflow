@@ -10,6 +10,7 @@ public class SettingsController : BaseApiController
     private readonly ISettingService _svc;
     public SettingsController(ISettingService svc) => _svc = svc;
 
+    /// <summary>读取全部系统设置（按 shop/sale/receipt/stock 等分组返回）</summary>
     [HttpGet]
     public async Task<ApiResult<object>> Get() => ApiResult<object>.Ok(await _svc.GetAsync());
 

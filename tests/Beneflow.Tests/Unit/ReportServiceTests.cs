@@ -2,7 +2,7 @@ using System.Text.Json;
 using Beneflow.Api.Models.Entities;
 using Microsoft.EntityFrameworkCore;
 
-namespace Beneflow.Tests;
+namespace Beneflow.Tests.Unit;
 
 /// <summary>报表服务测试：日/月销售、利润分析、供应商对账、赊账汇总、临期阈值、首页看板</summary>
 public class ReportServiceTests : TestBase

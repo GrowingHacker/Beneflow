@@ -2,7 +2,7 @@ using System.Text;
 using Beneflow.Api.Services;
 using ClosedXML.Excel;
 
-namespace Beneflow.Tests;
+namespace Beneflow.Tests.Unit;
 
 /// <summary>Excel/CSV 导出测试：基于 ClosedXML，能反读 .xlsx 验证内容；CSV 走 BOM + 解析</summary>
 public class ExportServiceTests

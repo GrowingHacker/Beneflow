@@ -25,6 +25,7 @@ public class ExportController : BaseApiController
     { _excel = excel; _products = products; _stocks = stocks; _sales = sales; _reports = reports; _purchases = purchases; }
 
     // ---- 采购进货单列表 ----
+    /// <summary>导出采购进货单列表</summary>
     [HttpGet("purchases")]
     public async Task<IActionResult> Purchases([FromQuery] string? keyword, [FromQuery] string? dateFrom,
         [FromQuery] string? dateTo, [FromQuery] string? format)
@@ -45,6 +46,7 @@ public class ExportController : BaseApiController
     }
 
     // ---- 销售单列表 ----
+    /// <summary>导出销售单列表</summary>
     [HttpGet("sales")]
     public async Task<IActionResult> Sales([FromQuery] string? keyword, [FromQuery] string? dateFrom,
         [FromQuery] string? dateTo, [FromQuery] string? payMethod, [FromQuery] string? format)
@@ -67,6 +69,7 @@ public class ExportController : BaseApiController
     }
 
     // ---- 商品列表 ----
+    /// <summary>导出商品列表</summary>
     [HttpGet("products")]
     public async Task<IActionResult> Products([FromQuery] string? keyword, [FromQuery] string? format)
     {
@@ -85,6 +88,7 @@ public class ExportController : BaseApiController
     }
 
     // ---- 实时库存 ----
+    /// <summary>导出实时库存</summary>
     [HttpGet("inventory")]
     public async Task<IActionResult> Inventory([FromQuery] string? keyword, [FromQuery] string? status, [FromQuery] string? format)
     {
@@ -104,6 +108,7 @@ public class ExportController : BaseApiController
     }
 
     // ---- 库存流水 ----
+    /// <summary>导出库存流水</summary>
     [HttpGet("stock-logs")]
     public async Task<IActionResult> StockLogs([FromQuery] string? keyword, [FromQuery] string? changeType, [FromQuery] string? format)
     {
@@ -123,6 +128,7 @@ public class ExportController : BaseApiController
     }
 
     // ---- 赊账记录 ----
+    /// <summary>导出赊账记录</summary>
     [HttpGet("credits")]
     public async Task<IActionResult> Credits([FromQuery] string? keyword, [FromQuery] string? status,
         [FromQuery] string? dateFrom, [FromQuery] string? dateTo, [FromQuery] string? format)
@@ -143,6 +149,7 @@ public class ExportController : BaseApiController
     }
 
     // ---- 库存预警 / 采购建议 ----
+    /// <summary>导出库存预警 / 采购建议</summary>
     [HttpGet("stock-warnings")]
     public async Task<IActionResult> StockWarnings([FromQuery] string? format)
     {
@@ -170,6 +177,7 @@ public class ExportController : BaseApiController
     }
 
     // ---- 日销售 Top5 ----
+    /// <summary>导出日销售 Top5</summary>
     [HttpGet("daily-sales")]
     public async Task<IActionResult> DailySales([FromQuery] string? date, [FromQuery] string? format)
     {
@@ -192,6 +200,7 @@ public class ExportController : BaseApiController
     }
 
     // ---- 供应商对账单 ----
+    /// <summary>导出供应商对账单</summary>
     [HttpGet("supplier-statement")]
     public async Task<IActionResult> SupplierStatement([FromQuery] int supplierId,
         [FromQuery] string? dateFrom, [FromQuery] string? dateTo, [FromQuery] string? format)

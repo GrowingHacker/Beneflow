@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using Microsoft.OpenApi.Models;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -54,6 +55,79 @@ builder.Host.UseSerilog();
 
 builder.Services.AddControllers();
 
+// ---------- 模型校验失败也走统一响应包络 ----------
+// [ApiController] 默认返回 RFC7807 的 ValidationProblemDetails（只有 title/errors，没有 message），
+// 与前端拦截器「读 err.response.data.message 弹提示」的约定不一致，会被降级成笼统的「网络错误」。
+// 这里把它改写成和业务失败一致的 { code, message, data }，同时保留 HTTP 400 的语义。
+builder.Services.Configure<Microsoft.AspNetCore.Mvc.ApiBehaviorOptions>(o =>
+{
+    o.InvalidModelStateResponseFactory = ctx =>
+    {
+        var msg = ctx.ModelState.Values
+            .SelectMany(v => v.Errors)
+            .Select(e => e.ErrorMessage)
+            .FirstOrDefault(m => !string.IsNullOrWhiteSpace(m))
+            ?? "请求参数不合法";
+
+        return new Microsoft.AspNetCore.Mvc.ObjectResult(
+            new { code = 400, message = msg, data = (object?)null })
+        {
+            StatusCode = StatusCodes.Status400BadRequest
+        };
+    };
+});
+
+// ---------- OpenAPI / Swagger：仅开发环境暴露 ----------
+// 生产是同域部署且接口全部需要鉴权，不对外提供接口文档，避免暴露内部接口结构。
+if (builder.Environment.IsDevelopment())
+{
+    builder.Services.AddEndpointsApiExplorer();
+    builder.Services.AddSwaggerGen(o =>
+    {
+        o.SwaggerDoc("v1", new OpenApiInfo
+        {
+            Title = "百惠通 Beneflow API",
+            Version = "v1",
+            Description = "便利店进销存系统接口。统一响应包络 { code, message, data }，code == 0 表示成功。"
+                        + "先调用 POST /api/v1/auth/login 取 token，再点右上角 Authorize 填入（无需 Bearer 前缀）。",
+        });
+
+        // 把编译生成的 XML 注释文件接进 Swagger：控制器/模型上的 /// 说明会显示在接口文档里。
+        // includeControllerXmlComments 让控制器级别的 <summary> 作为接口分组描述出现。
+        var xmlPath = Path.Combine(AppContext.BaseDirectory,
+            $"{typeof(Program).Assembly.GetName().Name}.xml");
+        if (File.Exists(xmlPath))
+        {
+            o.IncludeXmlComments(xmlPath, includeControllerXmlComments: true);
+        }
+
+        o.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+        {
+            Name = "Authorization",
+            Type = SecuritySchemeType.Http,
+            Scheme = "bearer",
+            BearerFormat = "JWT",
+            In = ParameterLocation.Header,
+            Description = "填入登录接口返回的 token（不需要写 Bearer 前缀）",
+        });
+
+        o.AddSecurityRequirement(new OpenApiSecurityRequirement
+        {
+            {
+                new OpenApiSecurityScheme
+                {
+                    Reference = new OpenApiReference
+                    {
+                        Type = ReferenceType.SecurityScheme,
+                        Id = "Bearer",
+                    },
+                },
+                Array.Empty<string>()
+            },
+        });
+    });
+}
+
 // ---------- EF Core + SQL Server（Code First） ----------
 builder.Services.AddDbContext<AppDbContext>(opt =>
     opt.UseSqlServer(builder.Configuration.GetConnectionString("Default")));
@@ -77,12 +151,23 @@ builder.Services.AddScoped<ISettingService, SettingService>();
 builder.Services.AddScoped<IBarcodeService, BarcodeService>();
 builder.Services.AddScoped<IExcelExportService, ExcelExportService>();   // ClosedXML 美观 Excel 导出
 builder.Services.AddScoped<ISupplierService, SupplierService>();
+// 库存变更互斥锁：把「读库存-校验-扣减-提交」串行化，消除并发丢更新（详见类注释里的适用边界）
+builder.Services.AddSingleton<StockMutationLock>();
 builder.Services.AddHttpClient();  // BarcodeService 调第三方 API 用
 builder.Services.AddHostedService<BackupHostedService>();   // 每日 02:00 自动全量备份（含启动补备）
 
 // ---------- JWT Bearer 认证 ----------
+// 启动期校验密钥：缺失或过短直接失败，避免运行期才抛空引用/签名异常。
+var jwtSecret = builder.Configuration["Jwt:Secret"];
+if (string.IsNullOrWhiteSpace(jwtSecret) || Encoding.UTF8.GetByteCount(jwtSecret) < 32)
+    throw new InvalidOperationException(
+        "配置项 Jwt:Secret 缺失或长度不足 32 字节。请复制 appsettings.example.json 为 appsettings.json 并填入随机密钥。");
+if (string.IsNullOrWhiteSpace(builder.Configuration["Security:AesKey"]))
+    throw new InvalidOperationException(
+        "配置项 Security:AesKey 缺失。请复制 appsettings.example.json 为 appsettings.json 并填入 base64 的 32 字节随机密钥。");
+
 var jwt = builder.Configuration.GetSection("Jwt");
-var keyBytes = Encoding.UTF8.GetBytes(jwt["Secret"]!);
+var keyBytes = Encoding.UTF8.GetBytes(jwtSecret);
 
 builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -103,9 +188,14 @@ builder.Services
 
 builder.Services.AddAuthorization();
 
-// ---------- CORS（开发期放开，生产同域部署无需） ----------
-builder.Services.AddCors(o => o.AddPolicy("Dev", p =>
-    p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod()));
+// ---------- CORS：仅开发环境放开 ----------
+// 生产是同域部署（前端静态文件由同一个 Kestrel 托管），根本不需要跨域，
+// 因此不注册任何 CORS 策略，避免 AllowAnyOrigin 在生产被滥用。
+if (builder.Environment.IsDevelopment())
+{
+    builder.Services.AddCors(o => o.AddPolicy("Dev", p =>
+        p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod()));
+}
 
 var app = builder.Build();
 
@@ -134,7 +224,15 @@ using (var scope = app.Services.CreateScope())
 }
 
 app.UseSerilogRequestLogging();
-app.UseCors("Dev");
+if (app.Environment.IsDevelopment())
+{
+    app.UseCors("Dev");
+
+    // 必须放在 MapFallback 之前：Swagger UI 是中间件而非静态文件，
+    // 否则 /swagger/index.html 会被 SPA 兜底路由吞掉。
+    app.UseSwagger();
+    app.UseSwaggerUI(o => o.SwaggerEndpoint("/swagger/v1/swagger.json", "Beneflow API v1"));
+}
 
 // 静态文件托管 wwwroot（前端主壳、页面片段、lib 全部在这里）
 // HTML 文件禁用缓存（no-cache = 每次协商 revalidate），避免发布新版本后浏览器用旧壳加载新页面片段导致组件缺失；

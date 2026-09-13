@@ -63,6 +63,7 @@ dotnet run --project src\Beneflow.Api
 - 首次启动自动种子演示数据（商品、供应商、单据、系统配置）
 - TLS 证书自动生成于 `%LocalAppData%\Beneflow\tls`，手机端安装根 CA 证书后 HTTPS 受信
 - 数据库备份输出到 `backups/`（不入库）
+- **开发环境专属**：接口文档 Swagger UI 位于 http://localhost:5000/swagger ，先调 `POST /api/v1/auth/login` 拿 token，再点 Authorize 填入即可调试受保护接口。生产环境不注册该中间件。
 
 ## 演示账号 & 初始账号
 
@@ -81,6 +82,7 @@ Beneflow/
 │   ├── Services/          # 业务服务（按域分目录：Users/Product/Sale/...，接口 + 实现）
 │   ├── Models/            # 实体（Entities/）、DTO、统一响应 ApiResult
 │   ├── Data/              # AppDbContext、DbSeeder 种子数据
+│   │   └── Configurations/  # EF 实体映射（一实体一文件，IEntityTypeConfiguration）
 │   ├── Migrations/        # EF Core 迁移
 │   ├── Utils/             # PasswordHasher、AesStringCipher、NetUtil
 │   └── wwwroot/           # 前端静态页（Vue 3 + Element Plus，动态加载 pages/*.html）
@@ -97,16 +99,86 @@ Beneflow/
 └── .gitignore
 ```
 
-## 单元测试
+## 开发约定
 
-使用 xUnit + EF Core InMemory 数据库，每个用例独立数据库，互不影响。
+- **分层**：Controller → Service（接口 + 实现）→ AppDbContext。控制器保持极薄，只做参数绑定与转发，业务逻辑一律放 Service。
+- **实体映射**：schema 配置（表名、列长度、精度、索引、外键删除行为）统一写在 `Data/Configurations/` 下「一实体一文件」的 `IEntityTypeConfiguration<T>` 里，由 `AppDbContext.OnModelCreating` 通过 `ApplyConfigurationsFromAssembly` 装配。新增实体时请同步新增对应配置文件（即使无需配置也要建），以保持一一对应、避免漏配无人察觉。
+- **统一响应**：`ApiResult` / `ApiResult<T>`，形状 `{ code, message, data }`，`code == 0` 为成功；分页用 `PagedResult<T>`。
+- **路由**：`/api/v1/<资源复数>`。
+- **认证**：控制器继承 `BaseApiController`（默认 `[Authorize]`），公开接口打 `[AllowAnonymous]`。
+- **业务服务**：`Services/<域>/` 下 `IXxxService.cs` + `XxxService.cs`。单个 Service 超过约 400 行时，用 `partial class` 按职责拆成多个文件（如 `SaleService.cs` 核心单据流程、`SaleService.Return.cs` 退货、`SaleService.Credit.cs` 赊账、`SaleService.Export.cs` 导出）。拆文件只做物理切分、不改变依赖关系，因此不引入行为变更，可以随时用测试回归。
+- **库存变更**：所有库存读写必须包在 `StockMutationLock` 的临界区内，详见「并发与一致性」一节。
+- **校验职责**：请求 DTO 上的数据注解只管「字段形态」（必填、长度上限、ID 为正数），与数据库列定义一一对应，不通过直接返回 400；业务规则（库存够不够、是否允许赊账、数量是否必须为整数）一律留在 Service，因为需要查库或读系统设置。同一条规则不要在两处重复表达。
+- **错误状态码**：业务失败沿用既有约定，返回 HTTP 200 + `code != 0`；参数校验失败返回 HTTP 400，但响应体仍是同样的 `{ code, message, data }` 包络，前端拦截器用同一套逻辑弹提示。
+- **迁移**：`dotnet ef migrations add <PascalCase英文描述>`，不要手改快照。
+
+## 并发与一致性
+
+库存是这套系统里唯一会被多方同时改动的数据，因此单独说明。
+
+### 问题
+
+销售 / 进货 / 退货 / 盘点确认都会执行同一套动作：
+
+```
+读 StockQuantity  →  判断够不够  →  写回新值
+```
+
+在 SQL Server 默认的 ReadCommitted 隔离级别下，`SELECT` 不持有排他锁。两个并发收银可以读到**同一个旧值**、**同时通过校验**、再各自写回——后写的那次覆盖先写的（经典 lost update）。后果是同一件库存被卖出多次、库存被扣成负数。
+
+同类问题还有两个：
+
+- **单号撞车**：单号是 `{前缀}{yyyyMMdd}{当日序号}`，序号由「今日单据数 + 1」推导。并发建单会算出同一个序号，撞 `OrderNo` 唯一索引后抛异常返回 500。
+- **重复处理**：作废 / 盘点确认都是「先查状态、再改状态」，并发下两次请求可以都通过检查，导致库存被重复回补或重复调整。
+
+### 方案
+
+`StockMutationLock`（`Services/Stock/StockMutationLock.cs`）提供两把锁：
+
+| 锁 | 粒度 | 作用 |
+|---|---|---|
+| `AcquireOrderNoAsync()` | 全局互斥 | 覆盖「算号 → 落库提交」整段。序号来自已提交的行数，只在算号瞬间加锁不够，必须整段串行 |
+| `AcquireAsync(productIds)` | 按商品 ID 分 64 桶 | 同一商品串行，不同商品并行 |
+
+**加锁顺序全局统一：先单据号锁，再商品库存锁。** 顺序反了会与建单请求构成死锁环。多商品时内部按桶序号升序获取、逆序释放，因此两个请求即使以相反的入参顺序申请同一组商品也不会死锁。
+
+临界区覆盖范围是「读-校验-改-提交」全程，且状态判定（是否已作废 / 是否已确认）保留在锁内重新读取，因此重复作废、重复确认的并发也会被串行化。
+
+### 适用边界（重要）
+
+该方案依赖**单进程部署**。本项目生产形态是 Kestrel + Windows Service 单实例，满足前提。
+
+若将来改为多实例 / 多进程部署，进程内锁会失效，届时必须改为数据库层方案：
+
+- `<c>Product</c>` 加 `RowVersion` 乐观并发，或
+- 把扣减改为条件更新 `WHERE StockQuantity >= qty` 并校验受影响行数（`ExecuteUpdateAsync`）
+
+对应地，`tests/Beneflow.Tests/Integration/StockConcurrencyIntegrationTests.cs` 需要改为针对真实 SQL Server 运行——InMemory 不支持事务，覆盖不到回滚语义。
+
+### 测试怎么验证
+
+- `StockMutationLockTests`：用临界区并发计数、交叉加锁超时上界等**不依赖墙钟时间**的方式验证锁语义（不去「睡一会儿看结果」，那种写法在全量并行跑测试时会假失败）。
+- `StockConcurrencyIntegrationTests`：并发收银同一件库存，断言「成功单数 == 库存件数、库存不为负」这条端到端不变量。
+
+## 测试
+
+**当前状态：330 个用例全部通过（约 40 秒）。**
 
 ```powershell
-# 运行所有测试
 dotnet test tests/Beneflow.Tests/Beneflow.Tests.csproj
 ```
 
-当前覆盖：采购进货单的创建、作废、编辑（含库存数量、移动加权平均成本、流水记录、边界场景）共 23 个用例。
+测试分两层：
+
+| 层次 | 说明 |
+|---|---|
+| 服务单元测试 | xUnit + EF Core InMemory，每个用例独立数据库，互不影响；覆盖各 Service 的业务分支与边界 |
+| 集成测试 | `WebApplicationFactory<Program>` 在进程内启动真实 API 管线（认证 → 路由 → 控制器 → Service → 数据库），通过 `HttpClient` 真实发起 HTTP 请求，验证跨模块协作与统一响应契约 |
+| 并发一致性测试 | 锁契约测试（确定性同步原语）+ 并发收银不超卖（端到端不变量），见「并发与一致性」一节 |
+
+规模：后端源码约 7.7k 行，测试代码约 5.8k 行（比例约 0.75 : 1）。
+
+详细的集成测试清单与结论见 [docs/集成测试报告.md](docs/集成测试报告.md)。
 
 ## 生产部署
 
@@ -198,12 +270,15 @@ D:\Beneflow\scripts\update-service.ps1
     "MinimumLevel": "Information"
   },
   "Jwt": {
+    "Secret": "<生产 JWT 密钥，至少 32 字符>",
     "Issuer": "Beneflow",
-    "Audience": "Beneflow",
-    "Key": "<生产 JWT 密钥，至少 32 字符>"
+    "Audience": "BeneflowClient",
+    "ExpireMinutes": 720
   }
 }
 ```
+
+> 注意字段名是 **`Jwt:Secret`**（不是 `Key`），与 `appsettings.example.json` 及 `Program.cs` 保持一致。
 
 修改后重启服务生效：`Restart-Service Beneflow.Api`
 

@@ -26,6 +26,7 @@ public class ReportsController : BaseApiController
         return ApiResult<object>.Ok(await _svc.MonthlySalesAsync(y, m));
     }
 
+    /// <summary>毛利分析（默认本月 1 日至今）</summary>
     [HttpGet("profit")]
     public async Task<ApiResult<object>> Profit([FromQuery] string? dateFrom, [FromQuery] string? dateTo)
     {
