@@ -13,6 +13,7 @@
 
 - 收银开单 / 销售退货 / 赊账管理
 - 采购入库 / 采购退货
+- 进货单支持 Excel 批量导入：一个 Sheet = 一张进货单，先预览校验再批量建单
 - 库存盘点 / 库存预警 / 临期预警
 - 商品条码：扫码录入；系统首页生成二维码，手机扫码后打开手机端入库页面（html5-qrcode，需 HTTPS 调用摄像头）
 - 报表：利润分析 / 供应商对账 / 赊账汇总
@@ -94,7 +95,7 @@ Beneflow/
 │   ├── deploy-kestrel-service.ps1
 │   ├── update-service.ps1
 │   └── uninstall-service.ps1
-├── docs/                  # 文档与截图
+├── docs/                  # 界面截图（docs/images/，被 README 预览章节引用）
 ├── README.md
 └── .gitignore
 ```
@@ -177,8 +178,6 @@ dotnet test tests/Beneflow.Tests/Beneflow.Tests.csproj
 | 并发一致性测试 | 锁契约测试（确定性同步原语）+ 并发收银不超卖（端到端不变量），见「并发与一致性」一节 |
 
 规模：后端源码约 7.7k 行，测试代码约 5.8k 行（比例约 0.75 : 1）。
-
-详细的集成测试清单与结论见 [docs/集成测试报告.md](docs/集成测试报告.md)。
 
 ## 生产部署
 
