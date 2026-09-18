@@ -308,6 +308,64 @@ public class ProductUpsertDto
     public string? Remark { get; set; }
 }
 
+/// <summary>
+/// 商品导入的一行数据（预览页解析出来后原样回传，服务端会重新校验一次）。
+/// 字段与导入模板一一对应；<see cref="Row"/> 只用于把失败信息定位回 Excel 行号。
+/// </summary>
+public class ProductImportRowDto
+{
+    /// <summary>原 Excel 行号（从 2 开始，1 是表头）</summary>
+    public int Row { get; set; }
+
+    /// <summary>条码；留空表示称重/散装商品，落库时自动生成店内码</summary>
+    [StringLength(20, ErrorMessage = "条码长度不能超过 20 位")]
+    public string Barcode { get; set; } = "";
+
+    /// <summary>商品名称</summary>
+    [StringLength(100, ErrorMessage = "商品名称长度不能超过 100 位")]
+    public string Name { get; set; } = "";
+
+    /// <summary>分类名称；系统里不存在时自动创建，留空归入「未分类」</summary>
+    [StringLength(50, ErrorMessage = "分类名称长度不能超过 50 位")]
+    public string? CategoryName { get; set; }
+
+    /// <summary>单位（瓶/袋/斤等）</summary>
+    [StringLength(10, ErrorMessage = "单位长度不能超过 10 位")]
+    public string Unit { get; set; } = "";
+
+    /// <summary>规格</summary>
+    [StringLength(50, ErrorMessage = "规格长度不能超过 50 位")]
+    public string? Spec { get; set; }
+
+    /// <summary>售价</summary>
+    public decimal SalePrice { get; set; }
+    /// <summary>成本价</summary>
+    public decimal CostPrice { get; set; }
+    /// <summary>库存；只在新建商品时作为期初库存写入</summary>
+    public decimal StockQuantity { get; set; }
+    /// <summary>安全库存</summary>
+    public decimal SafetyStock { get; set; }
+    /// <summary>保质期天数；&gt; 0 即启用有效期管理</summary>
+    public int ShelfLifeDays { get; set; }
+    /// <summary>是否称重商品</summary>
+    public bool IsWeighted { get; set; }
+    /// <summary>状态：true=上架 / false=下架</summary>
+    public bool Status { get; set; } = true;
+    /// <summary>备注</summary>
+    public string? Remark { get; set; }
+}
+
+/// <summary>批量导入商品档案请求</summary>
+public class ProductImportDto
+{
+    /// <summary>待导入的商品行</summary>
+    public List<ProductImportRowDto> Rows { get; set; } = new();
+
+    /// <summary>条码已存在时的处理：skip=跳过 / update=覆盖更新（覆盖不改动库存）</summary>
+    [StringLength(10, ErrorMessage = "处理方式长度不能超过 10 位")]
+    public string DuplicatePolicy { get; set; } = "skip";
+}
+
 public class SupplierUpsertDto
 {
     /// <summary>供应商 ID（新增时传 0）</summary>

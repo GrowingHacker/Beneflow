@@ -4,10 +4,36 @@
       <el-input v-model="keyword" placeholder="商品名称 / 条码" clearable style="width:220px;" @keyup.enter="search" />
       <el-button type="primary" @click="search">查询</el-button>
       <el-button @click="reset">重置</el-button>
-      <div class="grow"></div>
-      <el-button type="success" @click="openCreate">+ 新增商品</el-button>
-      <el-button @click="exportCsv">导出 CSV</el-button>
-      <el-button type="success" @click="exportExcel">导出 Excel</el-button>
+
+      <!-- 动作组整体贴右。导入/导出各收成一个下拉：5 个同级按钮挤一行，窄屏换行后
+           最后一个按钮会被甩到最左边，而且「下载模板」夹在两个「导出」中间，把
+           「导入 = 导入 Excel + 下载模板」这对天然搭档拆散了。 -->
+      <div class="actions">
+        <el-button type="success" @click="openCreate">+ 新增商品</el-button>
+
+        <el-dropdown trigger="click" @command="onImportCommand">
+          <el-button :loading="importing">导入<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="excel">Excel 批量导入</el-dropdown-item>
+              <el-dropdown-item command="template" divided>下载导入模板</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+
+        <el-dropdown trigger="click" @command="onExportCommand">
+          <el-button>导出<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="excel">导出 Excel</el-dropdown-item>
+              <el-dropdown-item command="csv">导出 CSV</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+      </div>
+
+      <!-- 原生 file input：下拉里的「Excel 批量导入」唤起它。比把 el-upload 塞进下拉菜单可靠 -->
+      <input ref="fileInput" type="file" accept=".xlsx,.xls" style="display:none;" @change="onImportFileChange" />
     </div>
 
     <div class="table-wrap">
@@ -98,6 +124,92 @@
     <template #footer>
       <el-button @click="dialog=false">取消</el-button>
       <el-button type="primary" @click="save">保存</el-button>
+    </template>
+  </el-dialog>
+
+  <!-- 导入预览：一行一个商品，先看列映射与逐行校验结果，确认后才落库 -->
+  <el-dialog
+    v-model="importPreviewDialog" title="商品导入预览"
+    width="min(1160px, 94vw)" top="5vh" :close-on-click-modal="false">
+    <el-alert v-if="importNotice" type="warning" :closable="false" style="margin-bottom:12px;">{{ importNotice }}</el-alert>
+
+    <el-collapse class="imp-collapse">
+      <el-collapse-item name="mapping" title="列映射（自动识别结果，识别错了可手动指定后重新解析）">
+        <div class="imp-mapping">
+          <el-form label-width="92px" size="small">
+            <el-row :gutter="12">
+              <el-col :span="8" v-for="f in importFields" :key="f.key">
+                <el-form-item :label="f.label + (f.required ? ' *' : '')">
+                  <el-select v-model="importMapping[f.key]" clearable placeholder="未映射" style="width:100%;">
+                    <el-option v-for="h in importHeaders" :key="h" :label="h" :value="h" />
+                  </el-select>
+                </el-form-item>
+              </el-col>
+            </el-row>
+          </el-form>
+          <el-button size="small" type="primary" :loading="importing" @click="reparse">按此映射重新解析</el-button>
+        </div>
+      </el-collapse-item>
+    </el-collapse>
+
+    <!-- 校验结果：带色小块比一句话更容易一眼看出量级差异 -->
+    <div v-if="importSummary.totalRows" class="imp-stats">
+      <span class="imp-stat new">可新增 <b>{{ importSummary.newCount }}</b></span>
+      <span class="imp-stat skip">已存在 <b>{{ importSummary.existingCount }}</b></span>
+      <span class="imp-stat err">错误 <b>{{ importSummary.errorCount }}</b></span>
+      <span class="imp-src">来源：{{ importSheetName || '首个工作表' }}，共 {{ importSummary.totalRows }} 行</span>
+    </div>
+
+    <div v-if="importSummary.newCategories.length" class="imp-hint">
+      将自动创建分类：{{ importSummary.newCategories.join('、') }}
+    </div>
+
+    <div class="imp-policy">
+      <span class="imp-label">条码已存在时</span>
+      <el-radio-group v-model="duplicatePolicy" size="small">
+        <el-radio-button label="skip">跳过</el-radio-button>
+        <el-radio-button label="update">覆盖更新</el-radio-button>
+      </el-radio-group>
+      <span v-if="duplicatePolicy === 'update'" class="imp-tip">
+        覆盖只改档案字段（名称 / 分类 / 单位 / 价格…），不会改动库存
+      </span>
+    </div>
+
+    <div class="imp-section-title">逐行校验</div>
+
+    <el-table :data="importRows" size="small" border max-height="360">
+      <el-table-column label="行" prop="row" width="55" align="center" />
+      <el-table-column label="结果" width="78" align="center">
+        <template #default="{ row }">
+          <el-tag :type="importRowTag(row).type" size="small">{{ importRowTag(row).text }}</el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="条码" prop="barcode" width="140" />
+      <el-table-column label="商品名称" prop="name" min-width="150" />
+      <el-table-column label="分类" prop="categoryName" width="90" />
+      <el-table-column label="单位" prop="unit" width="60" />
+      <el-table-column label="规格" prop="spec" width="80" />
+      <el-table-column label="售价" width="80" align="right"><template #default="{ row }">{{ common.money(row.salePrice) }}</template></el-table-column>
+      <el-table-column label="成本价" width="80" align="right"><template #default="{ row }">{{ common.money(row.costPrice) }}</template></el-table-column>
+      <el-table-column label="库存" prop="stockQuantity" width="70" align="right" />
+      <el-table-column label="问题" min-width="150">
+        <template #default="{ row }">
+          <span v-if="!row.messages.length" class="muted">—</span>
+          <span v-else style="color:#f56c6c;">{{ row.messages.join('；') }}</span>
+        </template>
+      </el-table-column>
+    </el-table>
+
+    <el-alert v-if="importFailed.length" type="error" :closable="false" style="margin-top:12px;">
+      <div>以下 {{ importFailed.length }} 行未能导入，其余已成功：</div>
+      <div v-for="(f, i) in importFailed" :key="i" style="font-size:12px;">第 {{ f.row }} 行 {{ f.name }}：{{ f.message }}</div>
+    </el-alert>
+
+    <template #footer>
+      <el-button @click="importPreviewDialog=false">取消</el-button>
+      <el-button type="primary" :loading="importSubmitting" :disabled="!importReadyCount" @click="confirmImport">
+        确认导入{{ importReadyCount ? '（' + importReadyCount + ' 条）' : '' }}
+      </el-button>
     </template>
   </el-dialog>
 </div>
@@ -263,8 +375,139 @@ function pageSetup(deps) {
     if (ok) toast('已导出', 'success');
   }
 
+  // ---- Excel 批量导入 ----
+  // 与进货单导入的区别：商品档案面对的是用户从旧软件导出的文件，列名不统一，
+  // 所以解析结果里带回表头与列映射，识别错了可以在预览页改完再重新解析。
+  const importing = ref(false);
+  const importPreviewDialog = ref(false);
+  const importRows = ref([]);
+  const importFields = ref([]);        // [{ key, label, required }]
+  const importHeaders = ref([]);       // 文件里的表头文字
+  const importMapping = ref({});       // { 字段key: 表头文字 }
+  const importSheetName = ref('');
+  const importSummary = ref({ totalRows: 0, newCount: 0, existingCount: 0, errorCount: 0, newCategories: [] });
+  const importNotice = ref('');
+  const duplicatePolicy = ref('skip');  // 条码已存在时：skip 跳过 / update 覆盖更新
+  const importSubmitting = ref(false);
+  const importFailed = ref([]);
+  const lastImportFile = ref(null);
+  const fileInput = ref(null);   // 工具栏里隐藏的原生 file input，由「导入」下拉唤起
+
+  // 本次可落库的行数（无错误 && （新商品 或 选择覆盖更新））
+  const importReadyCount = computed(function () {
+    return importRows.value.filter(function (r) {
+      if (r.messages && r.messages.length) return false;
+      return !r.isExisting || duplicatePolicy.value === 'update';
+    }).length;
+  });
+
+  function importRowTag(row) {
+    if (row.messages && row.messages.length) return { type: 'danger', text: '错误' };
+    if (row.isExisting) return duplicatePolicy.value === 'update'
+      ? { type: 'warning', text: '更新' } : { type: 'info', text: '跳过' };
+    return { type: 'success', text: '新增' };
+  }
+
+  function applyPreview(res) {
+    importSheetName.value = res.sheetName || '';
+    importHeaders.value = res.headers || [];
+    importFields.value = res.fields || [];
+    importMapping.value = res.mapping || {};
+    importRows.value = res.rows || [];
+    importSummary.value = res.summary || { totalRows: 0, newCount: 0, existingCount: 0, errorCount: 0, newCategories: [] };
+    importNotice.value = res.message || '';
+    importFailed.value = [];
+    importPreviewDialog.value = true;
+  }
+
+  /**
+   * 上传/重新解析：把当前列映射一并提交（首次上传 mapping 为空，交给后端自动识别）。
+   * 已清空的字段会以空串提交，后端据此不再自动补回，便于用户主动排除某列。
+   */
+  async function reparse() {
+    const file = lastImportFile.value;
+    if (!file) return null;
+    const fd = new FormData();
+    fd.append('file', file);
+    if (Object.keys(importMapping.value || {}).length) {
+      const map = {};
+      importFields.value.forEach(function (f) { map[f.key] = importMapping.value[f.key] || ''; });
+      fd.append('mapping', JSON.stringify(map));
+    }
+    const res = await api.post('/products/import/preview', fd);
+    applyPreview(res);
+    return res;
+  }
+
+  async function downloadTemplate() {
+    const ok = await common.downloadExcel('/products/import/template', {}, '商品导入模板.xlsx');
+    if (ok) toast('模板已下载', 'success');
+  }
+
+  async function importExcel(file) {
+    importing.value = true;
+    lastImportFile.value = file;
+    importMapping.value = {};   // 新文件重新自动识别
+    try { await reparse(); } catch (e) {}
+    finally { importing.value = false; }
+  }
+
+  // 工具栏「导入」下拉：下载模板直接走，批量导入得先唤起隐藏的 file input
+  function onImportCommand(cmd) {
+    if (cmd === 'template') { downloadTemplate(); return; }
+    if (fileInput.value) { fileInput.value.value = ''; fileInput.value.click(); }
+  }
+
+  // 取完就清空 value，否则连着选同一个文件不会再触发 change
+  function onImportFileChange(e) {
+    const f = e.target.files && e.target.files[0];
+    if (f) importExcel(f);
+  }
+
+  function onExportCommand(cmd) { if (cmd === 'csv') exportCsv(); else exportExcel(); }
+
+  async function confirmImport() {
+    const selected = importRows.value.filter(function (r) {
+      if (r.messages && r.messages.length) return false;
+      return !r.isExisting || duplicatePolicy.value === 'update';
+    });
+    if (!selected.length) { toast('没有可导入的商品', 'warning'); return; }
+    importSubmitting.value = true;
+    try {
+      const res = await api.post('/products/import/batch', {
+        duplicatePolicy: duplicatePolicy.value,
+        rows: selected.map(function (r) {
+          return {
+            row: r.row, barcode: r.barcode, name: r.name, categoryName: r.categoryName,
+            unit: r.unit, spec: r.spec, salePrice: r.salePrice, costPrice: r.costPrice,
+            stockQuantity: r.stockQuantity, safetyStock: r.safetyStock,
+            shelfLifeDays: r.shelfLifeDays, isWeighted: r.isWeighted,
+            status: r.status === '上架', remark: r.remark,
+          };
+        }),
+      });
+      const failed = res.failed || [];
+      const parts = [];
+      if (res.created) parts.push('新增 ' + res.created + ' 条');
+      if (res.updated) parts.push('更新 ' + res.updated + ' 条');
+      if (res.skipped) parts.push('跳过 ' + res.skipped + ' 条');
+      toast('导入完成：' + (parts.length ? parts.join('，') : '没有变化')
+        + (failed.length ? '，失败 ' + failed.length + ' 条' : ''),
+        failed.length ? 'warning' : 'success');
+      if (failed.length) importFailed.value = failed;   // 留在弹窗里给用户看失败明细
+      else importPreviewDialog.value = false;
+      loadCats();  // 可能新建了分类
+      load();
+    } catch (e) {}
+    finally { importSubmitting.value = false; }
+  }
+
   onMounted(function () { load(); loadCats(); loadDicts(); });
   return { list, loading, keyword, page, pageSize, total, dialog, form, common, cats, unitOptions, specOptions,
-    load, search, reset, openCreate, openEdit, save, toggleStatus, remove, expireTag, exportCsv, exportExcel, onWeightedChange };
+    load, search, reset, openCreate, openEdit, save, toggleStatus, remove, expireTag, exportCsv, exportExcel, onWeightedChange,
+    importing, importPreviewDialog, importRows, importFields, importHeaders, importMapping, importSheetName,
+    importSummary, importNotice, duplicatePolicy, importSubmitting, importFailed, importReadyCount,
+    importRowTag, reparse, downloadTemplate, importExcel, confirmImport,
+    fileInput, onImportCommand, onImportFileChange, onExportCommand };
 }
 </script>

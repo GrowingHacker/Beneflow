@@ -37,4 +37,24 @@ public class ProductsController : BaseApiController
     /// <summary>逻辑删除</summary>
     [HttpDelete("{id:int}")]
     public Task<ApiResult> Delete(int id) => _svc.DeleteAsync(id);
+
+    /// <summary>
+    /// 解析商品导入 Excel，返回表头、列映射与逐行校验结果（不写库）。
+    /// mapping 为可选的列映射覆盖（JSON：字段 key → 表头文字），用于修正自动识别错的列。
+    /// </summary>
+    [HttpPost("import/preview")]
+    public Task<ApiResult<object>> ImportPreview(IFormFile file, [FromForm] string? mapping)
+        => _svc.ParseImportAsync(file, mapping);
+
+    /// <summary>批量导入商品档案：整批一个事务，入参为预览页确认后的行数据</summary>
+    [HttpPost("import/batch")]
+    public Task<ApiResult<object>> ImportBatch([FromBody] ProductImportDto dto) => _svc.ImportBatchAsync(dto);
+
+    /// <summary>下载商品导入模板 .xlsx</summary>
+    [HttpGet("import/template")]
+    public IActionResult ImportTemplate()
+    {
+        var bytes = _svc.BuildImportTemplate();
+        return File(bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "商品导入模板.xlsx");
+    }
 }

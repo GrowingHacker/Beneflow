@@ -6,14 +6,35 @@
       <span style="margin:0 4px;color:#999;">至</span>
       <el-date-picker v-model="dateTo" type="date" value-format="YYYY-MM-DD" placeholder="结束日期" clearable style="width:150px;" />
       <el-button type="primary" @click="search">查询</el-button>
-      <div class="grow"></div>
-      <el-button type="success" @click="openCreate">+ 新增进货单</el-button>
-      <el-button @click="exportCsv">导出 CSV</el-button>
-      <el-button type="success" @click="exportExcel">导出 Excel</el-button>
-      <el-button @click="downloadTemplate">下载导入模板</el-button>
-      <el-upload :show-file-list="false" accept=".xlsx,.xls" :before-upload="importExcel" style="display:inline-block;margin-left:10px;">
-        <el-button type="warning" :loading="importing">导入 Excel</el-button>
-      </el-upload>
+
+      <!-- 动作组整体贴右。导入/导出各收成一个下拉 —— 原来 5 个同级按钮在 1440 宽下都会
+           折行，把「下载导入模板 / 导入 Excel」甩到第二行最左边，和「导出」断开。 -->
+      <div class="actions">
+        <el-button type="success" @click="openCreate">+ 新增进货单</el-button>
+
+        <el-dropdown trigger="click" @command="onImportCommand">
+          <el-button :loading="importing">导入<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="excel">Excel 批量导入</el-dropdown-item>
+              <el-dropdown-item command="template" divided>下载导入模板</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+
+        <el-dropdown trigger="click" @command="onExportCommand">
+          <el-button>导出<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="excel">导出 Excel</el-dropdown-item>
+              <el-dropdown-item command="csv">导出 CSV</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+      </div>
+
+      <!-- 原生 file input：下拉里的「Excel 批量导入」唤起它 -->
+      <input ref="fileInput" type="file" accept=".xlsx,.xls" style="display:none;" @change="onImportFileChange" />
     </div>
     <div class="table-wrap">
       <el-table :data="list" v-loading="loading" border size="small">
@@ -563,6 +584,7 @@ function pageSetup(deps) {
   const currentOrder = ref(null);
   const batchSubmitting = ref(false);
   const lastImportFile = ref(null);          // 保存文件引用，创建后重新解析
+  const fileInput = ref(null);               // 工具栏里隐藏的原生 file input，由「导入」下拉唤起
   // 供应商
   const supplierCreateDialog = ref(false);
   const supplierForms = ref([]);             // [{ sheetName, name, contact, phone, address, closed }]
@@ -601,8 +623,21 @@ function pageSetup(deps) {
       }
     } catch(e) {}
     finally { importing.value = false; }
-    return false;
   }
+
+  // 工具栏「导入」下拉：下载模板直接走，批量导入得先唤起隐藏的 file input
+  function onImportCommand(cmd) {
+    if (cmd === 'template') { downloadTemplate(); return; }
+    if (fileInput.value) { fileInput.value.value = ''; fileInput.value.click(); }
+  }
+
+  // 取完就清空 value，否则连着选同一个文件不会再触发 change
+  function onImportFileChange(e) {
+    const f = e.target.files && e.target.files[0];
+    if (f) importExcel(f);
+  }
+
+  function onExportCommand(cmd) { if (cmd === 'csv') exportCsv(); else exportExcel(); }
 
   function showImportPreview() {
     if (importOrders.value.length) {
@@ -749,6 +784,7 @@ function pageSetup(deps) {
     npDialog, npBarcodeLocked, npLoading, npSource, npHint, npForm, npSave,
     importing, importPreviewDialog, importOrders, importSkipped, orderErrorDialog, currentOrder,
     batchSubmitting, downloadTemplate, importExcel, viewOrderErrors, confirmImport,
+    fileInput, onImportCommand, onImportFileChange, onExportCommand,
     supplierCreateDialog, supplierForms, creatingSuppliers, createSuppliersAndReimport, showImportPreview,
     skipSuppliersAndContinue,
     productCreateDialog, productForms, creatingProducts, showProductCreateDialog,

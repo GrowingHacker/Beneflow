@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Beneflow.Api.Models;
 using Beneflow.Api.Models.Entities;
+using Microsoft.AspNetCore.Http;
 
 namespace Beneflow.Api.Services;
 
@@ -19,4 +20,11 @@ public interface IProductService
     Task<List<ProductCategory>> CategoriesAsync();
     Task<ApiResult<object>> CreateCategoryAsync(string name, int? parentId);
     Task<ApiResult> DeleteCategoryAsync(int id);
+
+    /// <summary>解析商品导入 Excel，返回表头/列映射/逐行校验结果（不写库）</summary>
+    Task<ApiResult<object>> ParseImportAsync(IFormFile file, string? mappingJson);
+    /// <summary>批量导入商品档案（整批一个事务）</summary>
+    Task<ApiResult<object>> ImportBatchAsync(ProductImportDto dto);
+    /// <summary>生成商品导入模板 .xlsx</summary>
+    byte[] BuildImportTemplate();
 }

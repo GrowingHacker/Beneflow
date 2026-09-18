@@ -15,6 +15,7 @@
 - 采购入库 / 采购退货
 - 进货单支持 Excel 批量导入：一个 Sheet = 一张进货单，先预览校验再批量建单
 - 库存盘点 / 库存预警 / 临期预警
+- 商品档案支持 Excel 批量导入：按同义词自动识别列名（品名/货品/零售价…），识别不准可在预览页手动改列映射；条码已存在时可选择跳过或覆盖更新；文件需为 `.xlsx` 格式（旧版 `.xls` 读不了，会明确提示另存为而不是报错）
 - 商品条码：扫码录入；系统首页生成二维码，手机扫码后打开手机端入库页面（html5-qrcode，需 HTTPS 调用摄像头）
 - 报表：利润分析 / 供应商对账 / 赊账汇总
 - 列表/报表导出：Excel（ClosedXML，标题合并 + 表头配色 + 合计行 + 自适应列宽）/ CSV（UTF-8 BOM）；按当前筛选条件导出全量
@@ -163,7 +164,7 @@ Beneflow/
 
 ## 测试
 
-**当前状态：330 个用例全部通过（约 40 秒）。**
+**当前状态：380 个用例全部通过（约 40 秒）。**
 
 ```powershell
 dotnet test tests/Beneflow.Tests/Beneflow.Tests.csproj
@@ -177,7 +178,11 @@ dotnet test tests/Beneflow.Tests/Beneflow.Tests.csproj
 | 集成测试 | `WebApplicationFactory<Program>` 在进程内启动真实 API 管线（认证 → 路由 → 控制器 → Service → 数据库），通过 `HttpClient` 真实发起 HTTP 请求，验证跨模块协作与统一响应契约 |
 | 并发一致性测试 | 锁契约测试（确定性同步原语）+ 并发收银不超卖（端到端不变量），见「并发与一致性」一节 |
 
-规模：后端源码约 7.7k 行，测试代码约 5.8k 行（比例约 0.75 : 1）。
+两层分工以商品档案导入为例是刻意划清的：`Unit/ProductImportTests.cs` 把真实 `.xlsx` 直接喂给 Service，覆盖表头同义词识别、列映射语义、逐行校验与三种落库行为（复杂度所在）；`Integration/ProductImportIntegrationTests.cs` 只补前者结构上测不到的部分——multipart 字段名（前端 `file` / `mapping` ↔ 控制器 `IFormFile` / `[FromForm]`）、未登录 401、模板下载的中文文件名响应头、以及换个端点回查是否真的落库。**任一端把字段改名，前者全绿而功能整体失效，只有后者能发现。**
+
+进货单导入沿用同一划分：`Unit/PurchaseImportTests.cs` 覆盖 Sheet 名 → 供应商匹配、表头同义词识别、条码优先/名称为辅的商品匹配、行级分流（未匹配商品、非法数量进价、整表跳过）以及「预览 → 批量建单」往返；`Integration/PurchaseImportIntegrationTests.cs` 补 401、非 Excel 扩展名与不可读文件的中文失败（不再是 500）、模板可下载，以及「上传预览 → 按前端映射批量建单 → 换个端点回查库存」这条完整链路。
+
+规模：后端源码约 9.3k 行（`src/Beneflow.Api/**/*.cs`，不含 EF 自动生成的 `Migrations/`），测试代码约 7.0k 行（`tests/**/*.cs`），比例约 0.75 : 1。
 
 ## 生产部署
 

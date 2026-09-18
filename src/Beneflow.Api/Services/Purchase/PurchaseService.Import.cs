@@ -1,6 +1,7 @@
 using Beneflow.Api.Data;
 using Beneflow.Api.Models;
 using Beneflow.Api.Models.Entities;
+using Beneflow.Api.Utils;
 using ClosedXML.Excel;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
@@ -33,7 +34,12 @@ public partial class PurchaseService : IPurchaseService
         await using (var fs = File.Create(savedPath))
             await file.CopyToAsync(fs);
 
-        using var wb = new XLWorkbook(savedPath);
+        // 与商品导入同样的问题：扩展名放行了 .xls，但 ClosedXML 只读得了 OpenXML，
+        // 旧版 .xls / 损坏文件会在这里抛异常，不兜住就会变成 500「服务器内部错误」。
+        var wb = ExcelUtil.TryOpen(savedPath);
+        if (wb is null)
+            return ApiResult<object>.Fail("无法读取该文件：请确认是有效的 .xlsx；若为旧版 .xls，请先用 Excel 另存为 .xlsx 再导入");
+        using var wbScope = wb;
 
         // 加载全部供应商，按名称匹配 Sheet 名
         var suppliers = await _db.Suppliers.AsNoTracking().ToDictionaryAsync(s => s.Name);

@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 namespace Beneflow.Api.Services;
 
 /// <summary>商品档案与分类</summary>
-public class ProductService : IProductService
+public partial class ProductService : IProductService
 {
     private readonly AppDbContext _db;
     private readonly ICurrentUser _me;

@@ -128,8 +128,17 @@ body {
   border-bottom: 1px solid #f2f3f5;
   display: flex; align-items: center; justify-content: space-between;
 }
+/* 工具栏：左侧筛选、右侧动作，横向间距一律交给 flex 的 gap。
+   下面这条用来抵消 Element Plus 自带的 .el-button+.el-button{12px}，
+   否则它叠在 gap 上会变成 22px，同一个工具栏里出现两种间距。 */
 .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 14px; }
 .toolbar .grow { flex: 1; min-width: 100px; }
+.toolbar .el-button + .el-button { margin-left: 0; }
+
+/* 右侧动作组：margin-left:auto 让它整体贴右；空间不够时整组一起换到第二行，
+   仍然是右对齐，不会把最后一个按钮单独甩到左边去。 */
+.toolbar .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-left: auto; }
+.toolbar .actions .el-button + .el-button { margin-left: 0; }
 
 .stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 16px; margin-bottom: 16px; }
 .stat-card {
@@ -245,3 +254,36 @@ body {
 }
 .dict-box .el-tag { margin:0 6px 6px 0; }
 .dict-add { display:flex; gap:6px; margin-top:2px; }
+
+/* ===== 商品导入预览弹窗 =====
+   弹窗要装 11 列校验明细，940px 装不下（表头合计约 1030px），最右侧的「问题」
+   列会被截掉、要横向滚动才看得到，所以宽度放到 1160px 并允许窄屏回落。 */
+.imp-collapse { margin-bottom: 12px; }
+.imp-mapping { background:#f7f8fa; border:1px solid #eef0f3; border-radius:6px; padding:12px 12px 12px; }
+.imp-mapping .el-form-item { margin-bottom: 12px; }
+.imp-mapping .el-form-item__label { padding-right: 8px; }
+
+/* 汇总条：可新增 / 已存在 / 错误 三块，颜色区分量级 */
+.imp-stats { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-bottom:10px; }
+.imp-stat { font-size:12px; line-height:1; padding:5px 10px; border-radius:4px; border:1px solid transparent; }
+.imp-stat b { font-size:13px; margin-left:2px; }
+.imp-stat.new { color:#529b2e; background:#f0f9eb; border-color:#e1f3d8; }
+.imp-stat.skip { color:#909399; background:#f4f4f5; border-color:#e9e9eb; }
+.imp-stat.err { color:#c45656; background:#fef0f0; border-color:#fde2e2; }
+.imp-src { font-size:12px; color:#909399; margin-left:auto; }
+
+.imp-hint {
+  font-size:12px; color:#b88230; background:#fdf6ec; border:1px solid #faecd8;
+  border-radius:4px; padding:6px 10px; margin-bottom:10px;
+}
+
+/* 查重策略行 */
+.imp-policy { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-bottom:12px; }
+.imp-policy .imp-label { font-size:12px; color:#909399; }
+.imp-policy .imp-tip { font-size:12px; color:#909399; }
+
+/* 小节标题：给弹窗分段，避免折叠块/汇总/策略/明细表挤成一坨 */
+.imp-section-title {
+  font-size:13px; font-weight:600; color:#606266;
+  padding-bottom:8px; margin-bottom:10px; border-bottom:1px solid #f2f3f5;
+}
