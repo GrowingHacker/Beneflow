@@ -95,9 +95,11 @@ Beneflow/
 ├── tests/Beneflow.Tests/  # 测试，包括单元测试和集成测试
 |
 ├── scripts/               # 部署/运维 PowerShell 脚本
-│   ├── deploy-kestrel-service.ps1
-│   ├── update-service.ps1
-│   └── uninstall-service.ps1
+│   ├── _common.ps1                # 共用库（连接串探测/校验、生产配置生成、实例名解析）
+│   ├── setup-sqlserver.ps1        # 准备数据库层：授权 + 生成生产配置 + 写凭据 txt
+│   ├── deploy-kestrel-service.ps1 # 首次部署
+│   ├── update-service.ps1         # 更新
+│   └── uninstall-service.ps1      # 卸载
 ├── docs/                  # 界面截图（docs/images/，被 README 预览章节引用）
 ├── README.md
 └── .gitignore
@@ -166,13 +168,13 @@ Beneflow/
 
 ## 测试
 
-**当前状态：380 个用例全部通过（约 40 秒）。**
+**当前状态：426 个用例全部通过（约 35 秒）。**
 
 ```powershell
 dotnet test tests/Beneflow.Tests/Beneflow.Tests.csproj
 ```
 
-测试分两层：
+测试分两层，另有一组专门的并发一致性测试：
 
 | 层次 | 说明 |
 |---|---|
@@ -184,7 +186,7 @@ dotnet test tests/Beneflow.Tests/Beneflow.Tests.csproj
 
 进货单导入沿用同一划分：`Unit/PurchaseImportTests.cs` 覆盖 Sheet 名 → 供应商匹配、表头同义词识别、条码优先/名称为辅的商品匹配、行级分流（未匹配商品、非法数量进价、整表跳过）以及「预览 → 批量建单」往返；`Integration/PurchaseImportIntegrationTests.cs` 补 401、非 Excel 扩展名与不可读文件的中文失败（不再是 500）、模板可下载，以及「上传预览 → 按前端映射批量建单 → 换个端点回查库存」这条完整链路。
 
-规模：后端源码约 9.3k 行（`src/Beneflow.Api/**/*.cs`，不含 EF 自动生成的 `Migrations/`），测试代码约 7.0k 行（`tests/**/*.cs`），比例约 0.75 : 1。
+规模：后端源码约 9.4k 行 / 107 个文件（`src/Beneflow.Api/**/*.cs`，不含 EF 自动生成的 `Migrations/`），测试代码约 7.4k 行 / 36 个文件（`tests/**/*.cs`），比例约 0.78 : 1。
 
 ## 生产部署
 
@@ -219,34 +221,45 @@ cd <发行包解压根目录 或 仓库根目录>
 
 | 脚本 | 用途 |
 |------|------|
-| [deploy-kestrel-service.ps1](scripts/deploy-kestrel-service.ps1) | 首次部署：校验 `.\publish\` → 初始化数据库 → 注册服务 + 防火墙 + 健康检查 |
+| [setup-sqlserver.ps1](scripts/setup-sqlserver.ps1) | 准备数据库层：探测实例 → 把应用服务的身份加入 `sysadmin` → 开混合模式并设 `sa` 随机密码 → 生成 `appsettings.Production.json` → 写 `数据库凭据.txt`。**不安装 SQL Server**（先自行装好 Express 版即可） |
+| [deploy-kestrel-service.ps1](scripts/deploy-kestrel-service.ps1) | 首次部署：校验 `.\publish\` → 校验配置 → **验证数据库连接** → 初始化数据库 → 注册服务 + 防火墙 + 健康检查 |
 | [update-service.ps1](scripts/update-service.ps1) | 更新：停服务 → 应用迁移 → 启服务 → 健康检查（用前先把新产物覆盖进 `.\publish\`） |
 | [uninstall-service.ps1](scripts/uninstall-service.ps1) | 卸载：删服务 + 防火墙 + 发布目录 + 证书 |
+| [_common.ps1](scripts/_common.ps1) | 内部共用库（连接串探测/校验、生产配置生成、实例名解析）。**不是给人直接跑的**，但必须与上面几个脚本同目录 |
 
-三个脚本都默认操作**脚本上一级目录下的 `publish\`**，也可以用 `-PublishDir` 指向别处：
+`setup-sqlserver.ps1` **可以安全重复运行**：`CREATE LOGIN` 带存在性判断，重复授权不报错，已填好的 `appsettings.Production.json` 也不会被覆盖（要覆盖加 `-ForceConfig`）。
+只有 `sa` 是例外：不传 `-SaPassword` 时**每次重跑都会重新生成随机密码**并覆盖，同时重启一次实例服务让 `LoginMode` 生效。想连这步一起跳过就加 `-SkipMixedMode`。
+
+脚本都默认操作**脚本上一级目录下的 `publish\`**，也可以用 `-PublishDir` 指向别处：
 
 ```
 <解压根目录>\
-├── publish\     已发布好的产物（Beneflow.Api.exe / wwwroot / appsettings.example.json …）
+├── publish\     已发布好的产物（Beneflow.Api.exe / wwwroot / 整个 .NET 运行时 / appsettings.example.json …）
 └── scripts\     部署脚本（本目录）
 ```
+
+`publish\` 是 **self-contained 发布**——.NET 运行时已经在产物里，目标机器不需要单独安装运行时。
 
 ### 首次部署
 
 #### 方式一：发行包部署（目标机器没有源码、没装 SDK，也不需要装 .NET 运行时）
 
-发行包 zip 解压后即上面那个目录结构，下面的命令都在**解压根目录**下执行：
+发行包 zip 解压后即上面那个目录结构，下面的命令都在**解压根目录**下执行。
+
+**第 0 步：装 SQL Server**（目标机器已有实例就跳过）。发行包根目录通常附带 SQL Server Express 安装器 `SQL2025-SSEI-Expr.exe`——它是在线引导安装器，装的时候需要联网；没有就自己去官网下。
 
 ```powershell
-# 1. 准备配置：从示例复制一份，填好数据库连接串 / Jwt:Secret / Security:AesKey
-Copy-Item .\publish\appsettings.example.json .\publish\appsettings.Production.json
-notepad .\publish\appsettings.Production.json
+Set-ExecutionPolicy -Scope Process Bypass -Force
+
+# 1. 准备数据库层：授权 + 生成 appsettings.Production.json + 写 scripts\数据库凭据.txt
+.\scripts\setup-sqlserver.ps1
 
 # 2. 一键部署（脚本内部会调用 .\publish\Beneflow.Api.exe --migrate 建库建表 + 播种演示数据）
-Set-ExecutionPolicy -Scope Process Bypass -Force
 .\scripts\deploy-kestrel-service.ps1
 ```
 
+- `setup-sqlserver.ps1` 会把实例名、应用使用的连接串和 `sa` 应急密码写进 `scripts\数据库凭据.txt`，请妥善保存；该文件已在 `.gitignore` 中排除，不要提交。
+- 不想用脚本准备配置也行：手工 `Copy-Item .\publish\appsettings.example.json .\publish\appsettings.Production.json` 并填好连接串 / `Jwt:Secret` / `Security:AesKey`，再跑 `deploy`——它会在第 2b 步**真连一次数据库**做验证，验不过就停下来并给出三条出路。
 - `--migrate` 让程序自己执行 EF 迁移：**迁移类已编译在 `Beneflow.Api.dll` 内，所以不需要源码、也不需要 SDK**
 - 它是幂等的，重复执行只会应用尚未执行的迁移
 - 需要跳过（例如 DBA 已手工建好库）：加 `-SkipMigrate`
@@ -264,12 +277,12 @@ dotnet publish .\src\Beneflow.Api\Beneflow.Api.csproj `
     -c Release -r win-x64 --self-contained true `
     -o .\publish
 
-# 2. 配置生产环境
-Copy-Item .\src\Beneflow.Api\appsettings.example.json .\publish\appsettings.Production.json
-# 编辑 .\publish\appsettings.Production.json，填生产数据库连接串
+# 2. 准备数据库层：授权 + 生成 appsettings.Production.json + 写 scripts\数据库凭据.txt
+#    （机器上还没有 SQL Server 的话，先装一个 Express 版）
+Set-ExecutionPolicy -Scope Process Bypass -Force
+.\scripts\setup-sqlserver.ps1
 
 # 3. 注册服务 + 初始化数据库 + 防火墙 + 健康检查（一键）
-Set-ExecutionPolicy -Scope Process Bypass -Force
 .\scripts\deploy-kestrel-service.ps1
 
 # 4. 手机端装根 CA（见下文「证书管理」）
@@ -298,12 +311,12 @@ Set-ExecutionPolicy -Scope Process Bypass -Force
 
 ### 配置文件
 
-`.\publish\appsettings.Production.json`（自己创建，参考 `appsettings.example.json`）：
+`.\publish\appsettings.Production.json` —— **推荐让 `setup-sqlserver.ps1` 自动生成**：它以 `appsettings.example.json` 为底复制一份，再补齐连接串与两个密钥，因此键结构一定完整。
 
 ```json
 {
   "ConnectionStrings": {
-    "Default": "Server=生产服务器IP;Database=Beneflow;User Id=sa;Password=xxx;TrustServerCertificate=True"
+    "Default": "Server=.\SQLEXPRESS;Database=BeneflowDb;Trusted_Connection=True;Encrypt=False"
   },
   "Serilog": {
     "MinimumLevel": "Information"
@@ -313,11 +326,16 @@ Set-ExecutionPolicy -Scope Process Bypass -Force
     "Issuer": "Beneflow",
     "Audience": "BeneflowClient",
     "ExpireMinutes": 720
+  },
+  "Security": {
+    "AesKey": "<base64 的 32 字节随机密钥，用于敏感字段加密>"
   }
 }
 ```
 
-> 注意字段名是 **`Jwt:Secret`**（不是 `Key`），与 `appsettings.example.json` 及 `Program.cs` 保持一致。
+- 默认走 **Windows 身份验证**：应用服务以 `LocalSystem` 运行，`setup-sqlserver.ps1` 已把 `NT AUTHORITY\SYSTEM` 加入 `sysadmin`，所以**配置里不需要出现任何密码**。想改用 SQL 登录名也可以在连接串里写 `User Id=...;Password=...`。
+- 注意字段名是 **`Jwt:Secret`**（不是 `Key`），与 `appsettings.example.json` 及 `Program.cs` 保持一致。
+- ⚠️ **别只写「连接串 + 两个密钥」这三项**：`Jwt:Issuer` / `Jwt:Audience` 是直接读配置且**没有兜底值**的，而启动期只校验 `Jwt:Secret` 与 `Security:AesKey`。如果 Production 缺了这两个键、`appsettings.json`（开发配置）又被删掉，应用照样启动、也能登录成功，但签发的 token 过不了校验 —— 表现为「登录成功，之后每个请求都 401」。以 `appsettings.example.json` 为底整份带过去才安全。
 
 修改后重启服务生效：`Restart-Service Beneflow.Api`
 
@@ -400,8 +418,9 @@ Get-WinEvent -LogName Application -ProviderName "Beneflow.Api" -MaxEvents 30
 ```
 
 最常见原因：
-- `appsettings.Production.json` 数据库连接串无效
-- EF 迁移未应用：`dotnet ef database update`
+- `appsettings.Production.json` 数据库连接串无效 —— 重跑 `.\scripts\deploy-kestrel-service.ps1`，它的第 2b 步会真连一次并给出原因
+- EF 迁移未应用：`.\publish\Beneflow.Api.exe --migrate`（有源码和 SDK 时也可 `dotnet ef database update`）
+- 应用服务的身份没有库权限：跑 `.\scripts\setup-sqlserver.ps1` 把 `NT AUTHORITY\SYSTEM` 加入 `sysadmin`
 - 5000/5001 端口被 IIS 抢占：`Stop-Service W3SVC`
 
 ### 5001 端口被 HTTP.SYS 占用
@@ -454,6 +473,20 @@ chcp 65001
 ```
 
 或装 PowerShell 7：`winget install Microsoft.PowerShell`，用 `pwsh` 启动。
+
+### 脚本报 PSSecurityException（无法加载文件……未对文件进行数字签名）
+
+Windows 客户端默认执行策略是 `Restricted`，直接运行 `.ps1` 会被拦下，脚本根本没跑起来。运行任何脚本前先解除限制：
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass -Force
+```
+
+`-Scope Process` 只影响当前这个 PowerShell 窗口，关掉即失效，不动系统全局策略，也不需要改注册表。
+
+### 脚本报「需要管理员权限」
+
+`setup-sqlserver.ps1` / `deploy-kestrel-service.ps1` 都要改 SQL Server 配置、注册系统服务、加防火墙规则，必须提权。用「以管理员身份运行」打开 PowerShell 再执行。
 
 ## 安全提示
 
