@@ -29,6 +29,8 @@ backups/
 ## Secrets & certs (never commit)
 appsettings.json
 appsettings.Production.json
+db-credentials.txt
+数据库凭据.txt
 *.pfx
 *.pem
 *.key

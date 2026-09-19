@@ -15,7 +15,7 @@
     })();
   </script>
   <link rel="stylesheet" href="/lib/element-plus/index.css" />
-  <link rel="stylesheet" href="/css/app.css?v=7" />
+  <link rel="stylesheet" href="/css/app.css?v=9" />
   <script src="/lib/vue/vue.global.prod.js"></script>
   <script src="/lib/element-plus/index.full.min.js"></script>
   <script src="/lib/element-plus/locale/zh-cn.min.js"></script>
@@ -71,6 +71,14 @@
           </el-dropdown>
         </div>
 
+        <!-- 演示数据常驻提示：库里还是种子数据就挂在主壳里（每个页面都可见），
+             初始化成功即消失。按钮只给店主看，后端还会再校验一次身份与确认文字。 -->
+        <div v-if="isDemoData" class="demo-banner">
+          <span class="demo-text">当前数据为演示数据，您了解熟悉完后若想正式使用，请点击初始化数据</span>
+          <el-button v-if="isOwner" type="primary" size="small" :loading="clearing"
+                     class="demo-btn" @click="onClearDemoData">初始化数据</el-button>
+        </div>
+
         <component :is="'page-' + page" v-if="ready"></component>
         <div v-else class="loading">加载中...</div>
       </div>
@@ -99,6 +107,6 @@
 
 <script src="/js/api.js?v=2"></script>
 <script src="/js/common.js?v=1"></script>
-<script src="/js/app.js?v=7"></script>
+<script src="/js/app.js?v=8"></script>
 </body>
 </html>

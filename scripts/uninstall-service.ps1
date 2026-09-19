@@ -1,18 +1,26 @@
-# Uninstall Beneflow.Api service and clean up
-# Usage: run in elevated PowerShell
+﻿# Uninstall Beneflow.Api service and clean up
+# Usage: run in elevated PowerShell, from the unzip root / repo root
 #   Set-ExecutionPolicy -Scope Process Bypass -Force
-#   .\uninstall-service.ps1
+#   .\scripts\uninstall-service.ps1
+# 路径相对脚本自身位置推导（发行包布局：publish\ 与 scripts\ 同级）。
 
 param(
     [string]$ServiceName = "Beneflow.Api",
-    [string]$PublishDir  = "D:\Beneflow\publish",
+    [string]$PublishDir  = "",             # 留空 = 自动识别（发行包布局优先，其次源码仓库布局）
     [switch]$KeepCerts,    # set to skip cert cleanup
     [switch]$KeepPublish  # set to skip publish dir cleanup
 )
 
 $ErrorActionPreference = "Continue"
 
-Write-Host "=== 1. Stop service ===" -ForegroundColor Cyan
+# 发布目录：默认「脚本上一级目录下的 publish\」（与 scripts\ 同级），可 -PublishDir 指定别处。
+# 删的就是这个已发布目录（发行包里就是 .\publish\）。
+if (-not $PublishDir) {
+    $PublishDir = Join-Path (Split-Path -Parent $PSScriptRoot) "publish"
+}
+Write-Host "发布目录：$PublishDir" -ForegroundColor Cyan
+
+Write-Host "=== 1. 停止服务 ===" -ForegroundColor Cyan
 $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
 if ($svc) {
     if ($svc.Status -eq "Running") {
@@ -22,76 +30,76 @@ if ($svc) {
             Start-Sleep -Seconds 1
         }
     }
-    Write-Host "Service stopped" -ForegroundColor Green
+    Write-Host "服务已停止" -ForegroundColor Green
 } else {
-    Write-Host "Service not found, skip" -ForegroundColor Yellow
+    Write-Host "未找到服务，跳过" -ForegroundColor Yellow
 }
 
 Write-Host ""
-Write-Host "=== 2. Delete service ===" -ForegroundColor Cyan
+Write-Host "=== 2. 删除服务 ===" -ForegroundColor Cyan
 if ($svc) {
     sc.exe delete $ServiceName | Out-Null
     if ($LASTEXITCODE -eq 0) {
-        Write-Host "Service deleted" -ForegroundColor Green
+        Write-Host "服务已删除" -ForegroundColor Green
     } else {
-        Write-Host "sc delete failed (exit $LASTEXITCODE)" -ForegroundColor Red
+        Write-Host "sc delete 失败（退出码 $LASTEXITCODE）" -ForegroundColor Red
     }
 } else {
-    Write-Host "Service not found, skip" -ForegroundColor Yellow
+    Write-Host "未找到服务，跳过" -ForegroundColor Yellow
 }
 
 Write-Host ""
-Write-Host "=== 3. Remove firewall rules ===" -ForegroundColor Cyan
+Write-Host "=== 3. 移除防火墙规则 ===" -ForegroundColor Cyan
 $rules = Get-NetFirewallRule -DisplayName "Beneflow.Api*" -ErrorAction SilentlyContinue
 if ($rules) {
     $rules | Remove-NetFirewallRule
-    Write-Host "Removed $($rules.Count) firewall rules" -ForegroundColor Green
+    Write-Host "已移除 $($rules.Count) 条防火墙规则" -ForegroundColor Green
 } else {
-    Write-Host "No Beneflow firewall rules found" -ForegroundColor Yellow
+    Write-Host "没有找到 Beneflow 的防火墙规则" -ForegroundColor Yellow
 }
 
 Write-Host ""
-Write-Host "=== 4. Kill any leftover processes ===" -ForegroundColor Cyan
+Write-Host "=== 4. 结束残留进程 ===" -ForegroundColor Cyan
 $proc = Get-Process -Name "Beneflow.Api" -ErrorAction SilentlyContinue
 if ($proc) {
     $proc | Stop-Process -Force
-    Write-Host "Killed leftover process (PID: $($proc.Id -join ','))" -ForegroundColor Green
+    Write-Host "已结束残留进程（PID：$($proc.Id -join ',')）" -ForegroundColor Green
 } else {
-    Write-Host "No leftover process" -ForegroundColor Yellow
+    Write-Host "没有残留进程" -ForegroundColor Yellow
 }
 
 if (-not $KeepPublish) {
     Write-Host ""
-    Write-Host "=== 5. Delete publish directory ===" -ForegroundColor Cyan
+    Write-Host "=== 5. 删除发布目录 ===" -ForegroundColor Cyan
     if (Test-Path $PublishDir) {
         Remove-Item -Path $PublishDir -Recurse -Force -ErrorAction SilentlyContinue
         if (Test-Path $PublishDir) {
-            Write-Host "Failed to delete (may still be locked): $PublishDir" -ForegroundColor Red
-            Write-Host "Try manually: explorer $PublishDir then delete" -ForegroundColor Yellow
+            Write-Host "删除失败（可能仍被占用）：$PublishDir" -ForegroundColor Red
+            Write-Host "请手工处理：explorer $PublishDir 然后删除" -ForegroundColor Yellow
         } else {
-            Write-Host "Deleted: $PublishDir" -ForegroundColor Green
+            Write-Host "已删除：$PublishDir" -ForegroundColor Green
         }
     } else {
-        Write-Host "Publish dir not found: $PublishDir" -ForegroundColor Yellow
+        Write-Host "没有找到发布目录：$PublishDir" -ForegroundColor Yellow
     }
 }
 
 if (-not $KeepCerts) {
     Write-Host ""
-    Write-Host "=== 6. Clean up TLS certificates ===" -ForegroundColor Cyan
+    Write-Host "=== 6. 清理 TLS 证书 ===" -ForegroundColor Cyan
 
     # LocalSystem account cert dir (used when running as Windows Service)
     $lsCertDir = "C:\Windows\System32\config\systemprofile\AppData\Local\Beneflow\tls"
     if (Test-Path $lsCertDir) {
         Remove-Item $lsCertDir -Recurse -Force -ErrorAction SilentlyContinue
-        Write-Host "Deleted LocalSystem cert dir: $lsCertDir" -ForegroundColor Green
+        Write-Host "已删除 LocalSystem 的证书目录：$lsCertDir" -ForegroundColor Green
     }
 
     # Current user cert dir (used when running via dotnet run)
     $cuCertDir = Join-Path $env:LOCALAPPDATA "Beneflow\tls"
     if (Test-Path $cuCertDir) {
         Remove-Item $cuCertDir -Recurse -Force -ErrorAction SilentlyContinue
-        Write-Host "Deleted CurrentUser cert dir: $cuCertDir" -ForegroundColor Green
+        Write-Host "已删除 CurrentUser 的证书目录：$cuCertDir" -ForegroundColor Green
     }
 
     # Leaf cert in LocalMachine\My
@@ -99,7 +107,7 @@ if (-not $KeepCerts) {
         Where-Object { $_.Subject -match "Beneflow-Server" } |
         ForEach-Object {
             Remove-Item "Cert:\LocalMachine\My\$($_.Thumbprint)" -Force -ErrorAction SilentlyContinue
-            Write-Host "Removed leaf cert: $($_.Thumbprint)" -ForegroundColor Green
+            Write-Host "已移除叶子证书：$($_.Thumbprint)" -ForegroundColor Green
         }
 
     # Root CA in LocalMachine\Root (may require special privileges)
@@ -109,26 +117,26 @@ if (-not $KeepCerts) {
         foreach ($ca in $rootCAs) {
             try {
                 Remove-Item "Cert:\LocalMachine\Root\$($ca.Thumbprint)" -Force -ErrorAction Stop
-                Write-Host "Removed Root CA: $($ca.Thumbprint)" -ForegroundColor Green
+                Write-Host "已移除根证书：$($ca.Thumbprint)" -ForegroundColor Green
             } catch {
-                Write-Host "Cannot remove Root CA (Windows protects it): $($ca.Thumbprint)" -ForegroundColor Yellow
-                Write-Host "  Manual removal: certlm.msc -> Trusted Root CAs -> find 'Beneflow Local Root CA' -> delete" -ForegroundColor Yellow
+                Write-Host "无法移除根证书（Windows 有保护）：$($ca.Thumbprint)" -ForegroundColor Yellow
+                Write-Host "  手工删除：certlm.msc -> 受信任的根证书颁发机构 -> 找到 'Beneflow Local Root CA' -> 删除" -ForegroundColor Yellow
             }
         }
     } else {
-        Write-Host "No Root CA found" -ForegroundColor Yellow
+        Write-Host "没有找到根证书" -ForegroundColor Yellow
     }
 }
 
 Write-Host ""
-Write-Host "=== Uninstall complete ===" -ForegroundColor Green
+Write-Host "=== 卸载完成 ===" -ForegroundColor Green
 Write-Host ""
-Write-Host "Verification:" -ForegroundColor Cyan
-Write-Host "  Service:    $(if (Get-Service $ServiceName -EA SilentlyContinue) {'STILL EXISTS'} else {'removed'})"
-Write-Host "  Process:    $(if (Get-Process -Name 'Beneflow.Api' -EA SilentlyContinue) {'STILL RUNNING'} else {'stopped'})"
-Write-Host "  Port 5000:  $(if (netstat -ano | Select-String ':5000.*LISTENING') {'still in use'} else {'free'})"
-Write-Host "  Port 5001:  $(if (netstat -ano | Select-String ':5001.*LISTENING') {'still in use'} else {'free'})"
+Write-Host "复核：" -ForegroundColor Cyan
+Write-Host "  服务：      $(if (Get-Service $ServiceName -EA SilentlyContinue) {'仍然存在'} else {'已移除'})"
+Write-Host "  进程：      $(if (Get-Process -Name 'Beneflow.Api' -EA SilentlyContinue) {'仍在运行'} else {'已停止'})"
+Write-Host "  端口 5000：$(if (netstat -ano | Select-String ':5000.*LISTENING') {'仍被占用'} else {'空闲'})"
+Write-Host "  端口 5001：$(if (netstat -ano | Select-String ':5001.*LISTENING') {'仍被占用'} else {'空闲'})"
 Write-Host ""
-Write-Host "Options used:" -ForegroundColor Cyan
-Write-Host "  KeepPublish: $KeepPublish"
-Write-Host "  KeepCerts:   $KeepCerts"
+Write-Host "使用的参数：" -ForegroundColor Cyan
+Write-Host "  KeepPublish：$KeepPublish"
+Write-Host "  KeepCerts：  $KeepCerts"

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Beneflow.Api.Services;
 using Beneflow.Api.Utils;
 using Microsoft.EntityFrameworkCore;
 
@@ -221,6 +222,19 @@ public class SettingServiceTests : TestBase
     {
         Assert.EndsWith("backups", SettingSvc.BackupDirPath);
         Assert.True(Path.IsPathRooted(SettingSvc.BackupDirPath));
+    }
+
+    /// <summary>
+    /// 回退过之后，备份目录必须**跟着看回退目录**：宿主备份服务是靠 <c>BackupDirPath</c> 判断
+    /// 「今天是不是已经有备份了」，如果它还盯着写不进去的首选目录，就会天天重复补备。
+    /// </summary>
+    [Fact]
+    public void BackupDirPath_FollowsFallbackDir()
+    {
+        var state = new BackupDirState { FallbackDir = @"C:\Program Files\Microsoft SQL Server\MSSQL17.SQLEXPRESS\MSSQL\Backup" };
+        var svc = new SettingService(Db, NewCipher(), Logs, Config, NewHostEnv(), state);
+
+        Assert.Equal(state.FallbackDir, svc.BackupDirPath);
     }
 
     [Fact]

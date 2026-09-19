@@ -452,3 +452,29 @@ public class RoleSetPermsDto
     /// <summary>该角色可访问的菜单 ID 集合</summary>
     public List<int> MenuIds { get; set; } = new();
 }
+
+/// <summary>演示数据状态：前端据此决定是否常驻提示「当前数据为演示数据」</summary>
+public class DemoDataStatusDto
+{
+    /// <summary>true=仍是演示数据（从未执行过初始化）；false=已初始化，可正式使用</summary>
+    public bool IsDemoData { get; set; }
+}
+
+/// <summary>初始化数据请求：confirm 必须原样填写「清空」，服务端强制校验</summary>
+public class ClearDemoDataDto
+{
+    /// <summary>确认文字，必须为「清空」</summary>
+    [Required(ErrorMessage = "请输入确认文字")]
+    [StringLength(10, ErrorMessage = "确认文字长度不能超过 10 位")]
+    public string Confirm { get; set; } = "";
+}
+
+/// <summary>初始化数据结果：清空前自动备份的落点（备份失败不阻断清空，原因随之返回）</summary>
+public class InitializeDataResultDto
+{
+    /// <summary>清空前自动备份的 .bak 完整路径；未做备份时为 null</summary>
+    public string? BackupPath { get; set; }
+
+    /// <summary>备份失败原因；备份成功或跳过备份时为 null</summary>
+    public string? BackupError { get; set; }
+}

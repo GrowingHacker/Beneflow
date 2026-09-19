@@ -9,7 +9,17 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using Serilog;
 
-var builder = WebApplication.CreateBuilder(args);
+// ---------- 命令行开关 ----------
+// --migrate：免源码建库（发行包里没有源码与 SDK，见下方 migration 分支）。
+// 它是「命令行工具」，调用方（部署脚本 / 用户）的工作目录不一定是发布目录；
+// 此时 ContentRoot 默认取工作目录会导致 appsettings.json、logs/ 都找不到，
+// 所以在只跑迁移时把它固定为程序所在目录。正常启动（含服务托管）保持默认行为。
+var migrateOnly = args.Contains("--migrate");
+var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+{
+    Args = args,
+    ContentRootPath = migrateOnly ? AppContext.BaseDirectory : null,
+});
 
 // ---------- Windows Service 托管 ----------
 // 让 dotnet 进程可作为系统服务运行；以控制台直接启动时此调用不影响行为。
@@ -135,6 +145,7 @@ builder.Services.AddDbContext<AppDbContext>(opt =>
 // ---------- 业务服务 ----------
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddSingleton<AccountStatusCache>();   // 请求级账号状态校验缓存
+builder.Services.AddSingleton<BackupDirState>();       // 备份目录的进程级状态（首选目录写不进去时退到 SQL 默认备份目录）
 builder.Services.AddScoped<ICurrentUser, CurrentUser>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IProductService, ProductService>();
@@ -209,6 +220,31 @@ app.UseExceptionHandler(a => a.Run(async ctx =>
     await ctx.Response.WriteAsync(System.Text.Json.JsonSerializer.Serialize(
         new { code = 500, message = "服务器内部错误，请稍后重试", data = (object?)null }));
 }));
+
+// ---------- 免源码建库：Beneflow.Api.exe --migrate ----------
+// 发行包里只有二进制的编译产物，没有源码也不一定装了 SDK，跑不了 `dotnet ef database update`。
+// 而迁移类本身就编译在本程序集内，所以由程序自己完成「应用迁移 + 播种演示数据」后退出即可。
+// 与请求管道无关，纯命令行工具：退出码 0 = 成功，1 = 失败（部署脚本据此判断）。
+if (args.Contains("--migrate"))
+{
+    try
+    {
+        using var migrateScope = app.Services.CreateScope();
+        var migrateDb = migrateScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        Log.Information("开始应用数据库迁移（--migrate）...");
+        await migrateDb.Database.MigrateAsync();
+        await DbSeeder.SeedAsync(migrateDb);
+        Log.Information("数据库已就绪（迁移已应用、种子数据已就位），进程退出。");
+        Log.CloseAndFlush();
+        return 0;
+    }
+    catch (Exception ex)
+    {
+        Log.Fatal(ex, "数据库迁移失败：请确认连接串可达 SQL Server，且账号具备建库/建表权限");
+        Log.CloseAndFlush();
+        return 1;
+    }
+}
 
 // ---------- 首次运行种子数据（幂等：已有用户则跳过） ----------
 using (var scope = app.Services.CreateScope())
@@ -308,8 +344,11 @@ try
 catch (Exception ex)
 {
     Log.Fatal(ex, "主机因异常终止");
+    return 1;
 }
 finally
 {
     Log.CloseAndFlush();
 }
+
+return 0;

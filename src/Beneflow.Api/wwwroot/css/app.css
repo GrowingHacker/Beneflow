@@ -255,6 +255,18 @@ body {
 .dict-box .el-tag { margin:0 6px 6px 0; }
 .dict-add { display:flex; gap:6px; margin-top:2px; }
 
+/* ===== 演示数据提示条 =====
+   挂在主壳 topbar 下方：库里还是种子数据时常驻显示，初始化成功后消失。
+   整条 = 一句提示 + 最右侧一个按钮，随内容区一起滚动（不做 fixed，避免长期遮挡内容）。 */
+.demo-banner {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+  background: #fdf6ec; border: 1px solid #faecd8; border-left: 4px solid #e6a23c;
+  border-radius: 6px; padding: 10px 14px; margin-bottom: 16px;
+  font-size: 13px; color: #b88230;
+}
+.demo-banner .demo-text { flex: 1; min-width: 220px; line-height: 1.5; }
+.demo-banner .demo-btn { flex: 0 0 auto; margin-left: auto; }
+
 /* ===== 商品导入预览弹窗 =====
    弹窗要装 11 列校验明细，940px 装不下（表头合计约 1030px），最右侧的「问题」
    列会被截掉、要横向滚动才看得到，所以宽度放到 1160px 并允许窄屏回落。 */
@@ -287,3 +299,13 @@ body {
   font-size:13px; font-weight:600; color:#606266;
   padding-bottom:8px; margin-bottom:10px; border-bottom:1px solid #f2f3f5;
 }
+
+/* ===== 弹窗里的长文本换行 =====
+   备份/还原失败时会把 SQL Server 的原始报错整段塞进 MessageBox，里面常带
+   「C:\Program Files\...\xxx.bak」这种**没有空格**的超长路径。Element Plus 只给了
+   overflow-wrap: break-word —— 它允许折行，却**不参与 min-content 计算**，所以消息 <p>
+   仍按最长 token 撑到 600px 以上（实测 611px），直接顶出 420px 的对话框，
+   文字压到页面上、右边整片看不见。
+   overflow-wrap: anywhere 会参与 min-content 计算，元素才能真正收进对话框宽度内。 */
+.el-message-box__message { min-width: 0; }
+.el-message-box__message p { overflow-wrap: anywhere; }

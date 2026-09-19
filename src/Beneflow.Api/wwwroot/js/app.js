@@ -209,6 +209,53 @@ async function initApp() {
         finally { pwdSubmitting.value = false; }
       }
 
+      // ---- 演示数据提示：库里还是种子数据就常驻显示，初始化成功后消失 ----
+      const isDemoData = ref(false);
+      const clearing = ref(false);
+      // 店主权限为 "*"，与后端 SettingsController.IsOwner 的判据一一对应
+      const isOwner = computed(function () { return can('*'); });
+
+      async function loadDemoStatus() {
+        try {
+          const s = await window.api.get('/settings/demo-data', { silent: true });
+          isDemoData.value = !!(s && s.isDemoData);
+        } catch (e) { isDemoData.value = false; }   // 取不到就不打扰用户
+      }
+
+      async function onClearDemoData() {
+        try {
+          await ElementPlus.ElMessageBox.prompt(
+            '将清空全部演示数据（商品、库存、进货、销售、赊账、盘点、日志），清空后不可恢复；'
+            + '账号、角色、菜单与系统设置会保留。确认请输入「清空」：',
+            '初始化数据',
+            {
+              type: 'warning', confirmButtonText: '确认初始化', cancelButtonText: '取消',
+              inputPlaceholder: '请输入：清空',
+              // 必须原样输入「清空」才放行；后端会再校验一次，两道闸
+              inputValidator: function (v) { return v === '清空' || '请输入「清空」两个字'; },
+            });
+        } catch (e) { return; }   // 用户取消
+
+        clearing.value = true;
+        try {
+          const res = await window.api.post('/settings/demo-data/clear', { confirm: '清空' });
+          isDemoData.value = false;
+          const path = res && res.backupPath;
+          const backupErr = res && res.backupError;
+          if (path) {
+            await ElementPlus.ElMessageBox.alert('已初始化，现在可以录入自己的数据了。清空前的备份已生成：' + path, '初始化完成');
+            window.location.reload();       // 各页面缓存的是演示数据，整体重载最省心
+          } else if (backupErr) {
+            await ElementPlus.ElMessageBox.alert('已初始化，现在可以录入自己的数据了。注意：清空前的自动备份失败（' + backupErr + '）', '初始化完成');
+            window.location.reload();
+          } else {
+            ElementPlus.ElMessage.success('已初始化，现在可以录入自己的数据了');
+            setTimeout(function () { window.location.reload(); }, 1200);
+          }
+        } catch (e) { /* 失败提示由 api.js 响应拦截器统一弹出 */ }
+        finally { clearing.value = false; }
+      }
+
       // 注入给各页面使用的公共依赖
       const deps = {
         currentUser: currentUser,
@@ -224,7 +271,7 @@ async function initApp() {
       };
       provide('deps', deps);
 
-      onMounted(function () { ready.value = true; });
+      onMounted(function () { ready.value = true; loadDemoStatus(); });
 
       return {
         ready: ready, page: page, pageTitle: pageTitle,
@@ -232,6 +279,7 @@ async function initApp() {
         currentUser: currentUser, onMenuSelect: onMenuSelect,
         logout: logout, onUserCommand: onUserCommand,
         pwdDialog: pwdDialog, pwdForm: pwdForm, submitPwd: submitPwd, pwdSubmitting: pwdSubmitting,
+        isDemoData: isDemoData, isOwner: isOwner, clearing: clearing, onClearDemoData: onClearDemoData,
       };
     }
   });

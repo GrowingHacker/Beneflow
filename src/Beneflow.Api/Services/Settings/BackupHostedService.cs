@@ -49,7 +49,16 @@ public class BackupHostedService : BackgroundService
 
     private static bool HasBackupAfter(string dir, DateTime time)
     {
-        if (!Directory.Exists(dir)) return false;
-        return Directory.GetFiles(dir, "*.bak").Any(f => System.IO.File.GetLastWriteTime(f) >= time);
+        try
+        {
+            if (!Directory.Exists(dir)) return false;
+            return Directory.GetFiles(dir, "*.bak").Any(f => System.IO.File.GetLastWriteTime(f) >= time);
+        }
+        catch
+        {
+            // 目录存在但枚举不了（例如回退到了 SQL Server 自己的 Backup 目录、而 app 账号没读取权）：
+            // 一律当「今天还没有备份」，多补备一次是无害的；这里抛出去反而会把启动流程搞挂。
+            return false;
+        }
     }
 }

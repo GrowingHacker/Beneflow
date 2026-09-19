@@ -77,7 +77,7 @@ public abstract class TestBase : IDisposable
         SupplierSvc = new SupplierService(Db);
         LogSvc = new LogService(Db, CurrentUser);
         AuthSvc = new AuthService(Db, Config, NullLogger<AuthService>.Instance);
-        SettingSvc = new SettingService(Db, new AesStringCipher(BuildConfig(), NewHostEnv()), Logs, Config, NewHostEnv());
+        SettingSvc = new SettingService(Db, new AesStringCipher(BuildConfig(), NewHostEnv()), Logs, Config, NewHostEnv(), new BackupDirState());
 
         SeedBaseData();
     }

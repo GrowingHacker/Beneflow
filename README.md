@@ -20,6 +20,7 @@
 - 报表：利润分析 / 供应商对账 / 赊账汇总
 - 列表/报表导出：Excel（ClosedXML，标题合并 + 表头配色 + 合计行 + 自适应列宽）/ CSV（UTF-8 BOM）；按当前筛选条件导出全量
 - 用户 / 角色 / 菜单权限、操作日志
+- 演示数据一键初始化：首次播种的演示数据期间，主壳常驻提示条「当前数据为演示数据……」，店主可点「初始化数据」清空全部业务数据（商品/分类/供应商/库存/进货/销售/赊账/盘点/日志），**保留**账号、角色、菜单与系统设置；需输入「清空」二次确认，清空前自动备份（备份失败不阻断并回显原因）
 - JWT 认证；局域网 HTTPS（自动生成自签证书，手机端安装根 CA 后扫码即可访问移动页面）
 
 ## 快速开始
@@ -63,8 +64,9 @@ dotnet run --project src\Beneflow.Api
 ```
 
 - 首次启动自动种子演示数据（商品、供应商、单据、系统配置）
+- 种子只在「库中还没有任何用户」时执行；点过「初始化数据」后账号仍在，因此重启**不会**把演示数据重新播种回来
 - TLS 证书自动生成于 `%LocalAppData%\Beneflow\tls`，手机端安装根 CA 证书后 HTTPS 受信
-- 数据库备份输出到 `backups/`（不入库）
+- 数据库备份输出到 `backups/`（不入库）。若该目录对 **SQL Server 服务账号**不可写（app 装在用户目录 / Program Files 下时常见，会报「操作系统错误 5(拒绝访问)」），会自动改用 `%ProgramData%\Beneflow\backups`，最后兜底是 SQL Server 自己的默认备份目录 —— **备份本身不会因此失败**
 - **开发环境专属**：接口文档 Swagger UI 位于 http://localhost:5000/swagger ，先调 `POST /api/v1/auth/login` 拿 token，再点 Authorize 填入即可调试受保护接口。生产环境不注册该中间件。
 
 ## 演示账号 & 初始账号
@@ -205,46 +207,76 @@ dotnet test tests/Beneflow.Tests/Beneflow.Tests.csproj
 - 优势：IIS 管理器可视化监控、应用池自动重启、静态文件性能最优
 - 劣势：证书导入到 `LocalMachine\Root/My` 需 UAC 提权、与 Kestrel 端口冲突
 
-### 一键部署脚本
+### 部署脚本
 
-所有脚本位于 `scripts/`，**必须在管理员 PowerShell 中运行**：
+所有脚本位于 `scripts/`，**必须在管理员 PowerShell 中运行**，并且**只面向已经发布好的 `publish` 文件夹**——它们不负责编译，也不会调用 `dotnet publish`。
+脚本内部路径全部相对自身位置推导，所以整包解压到任意目录都能用：
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass -Force
-cd D:\Beneflow\scripts
+cd <发行包解压根目录 或 仓库根目录>
 ```
 
 | 脚本 | 用途 |
 |------|------|
-| [deploy-kestrel-service.ps1](scripts/deploy-kestrel-service.ps1) | 首次部署：注册服务 + 防火墙 + 健康检查 |
-| [update-service.ps1](scripts/update-service.ps1) | 重新部署：停服务 → dotnet publish → 启服务 → 验证 |
+| [deploy-kestrel-service.ps1](scripts/deploy-kestrel-service.ps1) | 首次部署：校验 `.\publish\` → 初始化数据库 → 注册服务 + 防火墙 + 健康检查 |
+| [update-service.ps1](scripts/update-service.ps1) | 更新：停服务 → 应用迁移 → 启服务 → 健康检查（用前先把新产物覆盖进 `.\publish\`） |
 | [uninstall-service.ps1](scripts/uninstall-service.ps1) | 卸载：删服务 + 防火墙 + 发布目录 + 证书 |
+
+三个脚本都默认操作**脚本上一级目录下的 `publish\`**，也可以用 `-PublishDir` 指向别处：
+
+```
+<解压根目录>\
+├── publish\     已发布好的产物（Beneflow.Api.exe / wwwroot / appsettings.example.json …）
+└── scripts\     部署脚本（本目录）
+```
 
 ### 首次部署
 
+#### 方式一：发行包部署（目标机器没有源码、没装 SDK，也不需要装 .NET 运行时）
+
+发行包 zip 解压后即上面那个目录结构，下面的命令都在**解压根目录**下执行：
+
 ```powershell
-# 1. 发布（framework-dependent，服务器已装 .NET 8 Runtime）
-dotnet publish D:\Beneflow\src\Beneflow.Api\Beneflow.Api.csproj `
-    -c Release -r win-x64 --self-contained false `
-    -o D:\Beneflow\publish
+# 1. 准备配置：从示例复制一份，填好数据库连接串 / Jwt:Secret / Security:AesKey
+Copy-Item .\publish\appsettings.example.json .\publish\appsettings.Production.json
+notepad .\publish\appsettings.Production.json
+
+# 2. 一键部署（脚本内部会调用 .\publish\Beneflow.Api.exe --migrate 建库建表 + 播种演示数据）
+Set-ExecutionPolicy -Scope Process Bypass -Force
+.\scripts\deploy-kestrel-service.ps1
+```
+
+- `--migrate` 让程序自己执行 EF 迁移：**迁移类已编译在 `Beneflow.Api.dll` 内，所以不需要源码、也不需要 SDK**
+- 它是幂等的，重复执行只会应用尚未执行的迁移
+- 需要跳过（例如 DBA 已手工建好库）：加 `-SkipMigrate`
+
+#### 方式二：源码仓库部署（在仓库根目录执行）
+
+```powershell
+# 1. 发布 —— 这是开发侧动作，不在部署脚本里
+#    用 self-contained：把 .NET 8 运行时一起打进产物，目标机器**不需要装任何 .NET 运行时**
+#    （也就不会有「运行时装在哪、DOTNET_ROOT 对不对」这类问题）。
+#    代价：产物从 framework-dependent 的约 28 MB 涨到约 125 MB（423 个文件）。
+#    依赖 NuGet 上的 Microsoft.NETCore.App.Runtime.win-x64 / Microsoft.AspNetCore.App.Runtime.win-x64，
+#    首次还原若断流见文末「发布时下载 Runtime 包失败」。
+dotnet publish .\src\Beneflow.Api\Beneflow.Api.csproj `
+    -c Release -r win-x64 --self-contained true `
+    -o .\publish
 
 # 2. 配置生产环境
-Copy-Item D:\Beneflow\src\Beneflow.Api\appsettings.example.json `
-          D:\Beneflow\publish\appsettings.Production.json
-# 编辑 D:\Beneflow\publish\appsettings.Production.json，填生产数据库连接串
+Copy-Item .\src\Beneflow.Api\appsettings.example.json .\publish\appsettings.Production.json
+# 编辑 .\publish\appsettings.Production.json，填生产数据库连接串
 
-# 3. 应用 EF 迁移（首次部署必做）
-$env:ASPNETCORE_ENVIRONMENT="Production"
-$env:ConnectionStrings__Default="<生产连接串>"
-dotnet ef database update --project D:\Beneflow\src\Beneflow.Api `
-    --connection "<生产连接串>"
-
-# 4. 注册服务 + 防火墙 + 健康检查（一键）
+# 3. 注册服务 + 初始化数据库 + 防火墙 + 健康检查（一键）
 Set-ExecutionPolicy -Scope Process Bypass -Force
-D:\Beneflow\scripts\deploy-kestrel-service.ps1
+.\scripts\deploy-kestrel-service.ps1
 
-# 5. 手机端装根 CA（见下文「证书管理」）
+# 4. 手机端装根 CA（见下文「证书管理」）
 ```
+
+> 数据库也可以沿用 EF 工具链创建（需源码 + SDK）：`dotnet ef database update --project .\src\Beneflow.Api --connection "<生产连接串>"`。
+> 两条路等价：`--migrate` 走的就是同一套迁移类。
 
 部署成功后访问：
 
@@ -252,18 +284,21 @@ D:\Beneflow\scripts\deploy-kestrel-service.ps1
 - HTTPS: https://localhost:5001
 - 局域网：http://<本机IP>:5000 / https://<本机IP>:5001
 
-### 重新部署（代码更新后）
+### 重新部署（拿到新版本的发布产物后）
 
 ```powershell
+# 1. 把新版本的发布产物覆盖进 .\publish\（脚本不做编译）
+# 2. 停服务 → 应用新迁移 → 启服务 → 健康检查
 Set-ExecutionPolicy -Scope Process Bypass -Force
-D:\Beneflow\scripts\update-service.ps1
+.\scripts\update-service.ps1
 ```
 
-脚本自动执行：停服务 → dotnet publish → 启服务 → curl 健康检查。
+脚本会依次执行：停服务 → `Beneflow.Api.exe --migrate`（应用新版本带来的迁移，幂等）→ 启服务 → curl 健康检查 → 打印最新日志。
+如果想自己控制迁移时机，加 `-SkipMigrate`。
 
 ### 配置文件
 
-`D:\Beneflow\publish\appsettings.Production.json`（自己创建，参考 `appsettings.example.json`）：
+`.\publish\appsettings.Production.json`（自己创建，参考 `appsettings.example.json`）：
 
 ```json
 {
@@ -322,7 +357,7 @@ Get-Process -Name "Beneflow.Api" | Select-Object Id, StartTime
 netstat -ano | findstr ":5000 :5001"
 
 # 日志（Serilog 文件）
-Get-Content "D:\Beneflow\publish\logs\Beneflow.log" -Tail 50 -Wait
+Get-Content ".\publish\logs\log-$(Get-Date -Format 'yyyyMMdd').txt" -Tail 50 -Wait
 
 # 事件查看器
 Get-WinEvent -LogName Application -ProviderName "Beneflow.Api" -MaxEvents 30 |
@@ -336,7 +371,7 @@ Get-ChildItem "C:\Windows\System32\config\systemprofile\AppData\Local\Beneflow\t
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass -Force
-D:\Beneflow\scripts\uninstall-service.ps1
+.\scripts\uninstall-service.ps1
 ```
 
 选项：`-KeepPublish` 保留发布目录；`-KeepCerts` 保留证书（手机端已装根 CA 时用）。
@@ -390,19 +425,23 @@ curl.exe -k -s -o NUL -w "%{http_code}`n" https://127.0.0.1:5001/
 
 ### 发布时下载 Runtime 包失败（ResponseEnded）
 
-国内访问 nuget.org 大包易断流。改用 framework-dependent 模式：
+self-contained 发布需要 `Microsoft.NETCore.App.Runtime.win-x64` 与 `Microsoft.AspNetCore.App.Runtime.win-x64`
+这两个运行时包（各几十 MB），国内访问 nuget.org 大包易断流。
 
-```powershell
-dotnet publish ... --self-contained false
-```
-
-或配置 NuGet 国内镜像：
+本机已缓存 **8.0.25** 版这两个包，走缓存时还原只要几秒、完全离线。换机器或需要更新版本时才可能真去下载，断流就配国内镜像：
 
 ```xml
 <!-- NuGet.Config -->
 <packageSources>
   <add key="tuna" value="https://nuget.tuna.tsinghua.edu.cn/v3/index.json" />
 </packageSources>
+```
+
+实在拿不到运行时包，才退回 framework-dependent —— 此时**目标机器必须自己装 .NET 8 Runtime 或 Hosting Bundle**，
+否则会看到 `You must install .NET to run this application.`：
+
+```powershell
+dotnet publish ... --self-contained false
 ```
 
 ### 中文 PowerShell 输出乱码
