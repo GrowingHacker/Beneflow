@@ -1,4 +1,4 @@
-using Beneflow.Api.Models.Entities;
+﻿using Beneflow.Api.Models.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
@@ -14,6 +14,7 @@ public class SaleOrderDetailConfiguration : IEntityTypeConfiguration<SaleOrderDe
         e.Property(x => x.Barcode).HasMaxLength(20);
         e.Property(x => x.Quantity).HasPrecision(10, 3);
         e.Property(x => x.UnitPrice).HasPrecision(10, 2);
+        e.Property(x => x.OriginalPrice).HasPrecision(10, 2);
         e.Property(x => x.CostPrice).HasPrecision(10, 2);
         e.Property(x => x.SubTotal).HasPrecision(12, 2);
         e.Property(x => x.ReturnedQuantity).HasPrecision(10, 3).HasDefaultValueSql("(0)");

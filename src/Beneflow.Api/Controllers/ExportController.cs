@@ -57,14 +57,18 @@ public class ExportController : BaseApiController
             SheetName = "销售单列表", Title = "销售单列表", FileName = "销售单列表.xlsx",
             Columns = new()
             {
-                f("orderNo","单号"), m("totalAmount","总金额"), m("discountAmount","折扣"),
-                m("payAmount","实收"), f("payMethod","收款方式"),
-                m("cashAmount","现金"), m("changeAmount","找零"),
+                f("orderNo","单号"), m("totalAmount","商品总额"),
+                m("discountAmount","优惠"), f("discountRate","折扣"),
+                m("roundOffAmount","抹零"), m("payAmount","应收"), m("receivedAmount","实收"),
+                f("payMethod","收款方式"),
+                m("cashAmount","收款额"), m("changeAmount","找零"),
                 f("status","状态"), f("isCredit","赊账"), f("wechatId","微信号"),
                 dt("createdAt","时间"), f("createdByName","操作人"),
             },
-            Rows = rows, SummaryLabel = "合计",
-            SummaryFields = { "totalAmount", "discountAmount", "payAmount", "cashAmount", "changeAmount" },
+            Rows = rows, SummaryLabel = "合计（不含已作废）",
+            SummaryFields = { "totalAmount", "discountAmount", "roundOffAmount", "payAmount", "receivedAmount", "cashAmount", "changeAmount" },
+            // 作废单照常导出（带「已作废」状态），但不计入合计，与销售单列表的合计口径一致
+            SummaryExcludeField = "status", SummaryExcludeValues = { "已作废" },
         }, format);
     }
 

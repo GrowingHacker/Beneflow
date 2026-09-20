@@ -78,6 +78,34 @@ public class CreditIntegrationTests : IntegrationTestBase
         var credit = await GetCreditAsync(wechatId);
         Assert.Equal("已结清", credit.GetProperty("status").GetString());
         Assert.Equal(0m, credit.GetProperty("remainingAmount").GetDecimal());
+
+        // 还款要回写到原销售单的实收：销售列表里该单实收 = 应收
+        var orderNo = credit.GetProperty("saleOrderNo").GetString();
+        var salesBody = await ReadBody(await Client.GetAsync($"/api/v1/sales?keyword={orderNo}"));
+        var row = salesBody.GetProperty("data").GetProperty("list").EnumerateArray().First();
+        Assert.Equal(amount, row.GetProperty("receivedAmount").GetDecimal());
+        Assert.Equal(amount, row.GetProperty("payAmount").GetDecimal());
+    }
+
+    [Fact]
+    public async Task Credit_PartialSettle_ReceivedAmountFollowsPaidAmount()
+    {
+        await LoginAsAdminAsync();
+        var name = "ITCR5_" + Guid.NewGuid().ToString("N")[..8];
+        var (creditId, wechatId, amount) = await CreateCreditSaleAsync(name, 12m, 10, 3);   // 欠 36
+
+        await ExpectOk(await PostJsonAsync($"/api/v1/credits/{creditId}/settle",
+            new { payAmount = 10m, payMethod = "微信" }));
+
+        var credit = await GetCreditAsync(wechatId);
+        Assert.Equal(10m, credit.GetProperty("paidAmount").GetDecimal());
+        Assert.Equal(amount - 10m, credit.GetProperty("remainingAmount").GetDecimal());
+
+        var orderNo = credit.GetProperty("saleOrderNo").GetString();
+        var salesBody = await ReadBody(await Client.GetAsync($"/api/v1/sales?keyword={orderNo}"));
+        var row = salesBody.GetProperty("data").GetProperty("list").EnumerateArray().First();
+        Assert.Equal(10m, row.GetProperty("receivedAmount").GetDecimal());   // 部分还款 → 实收只涨到 10
+        Assert.Equal(amount, row.GetProperty("payAmount").GetDecimal());     // 应收不因还款变化
     }
 
     [Fact]

@@ -224,18 +224,24 @@ public abstract class TestBase : IDisposable
         return doc.RootElement.Clone();
     }
 
-    /// <summary>直接落库一张销售单（用于报表类测试，避免依赖销售服务）</summary>
+    /// <summary>
+    /// 直接落库一张销售单（用于报表类测试，避免依赖销售服务）。
+    /// 金额按行业口径保持一致：实收 = 非赊账时为应收；收款额（递钞）仅现金单有值。
+    /// </summary>
     protected SaleOrder SeedSale(decimal payAmount, DateTime createdAt, bool isCredit = false, bool isVoided = false,
         string payMethod = "现金", decimal discount = 0)
     {
+        var isCash = payMethod == "现金";
         var o = new SaleOrder
         {
             OrderNo = $"SO{createdAt:yyyyMMdd}{Db.SaleOrders.Count() + 1:D3}",
             TotalAmount = payAmount + discount,
             DiscountAmount = discount,
+            RoundOffAmount = 0,
             PayAmount = payAmount,
+            ReceivedAmount = isCredit ? 0 : payAmount,
             PayMethod = payMethod,
-            CashAmount = payAmount,
+            CashAmount = isCash ? payAmount : 0,
             IsCredit = isCredit,
             IsVoided = isVoided,
             CreatedBy = UserId,
@@ -246,19 +252,49 @@ public abstract class TestBase : IDisposable
         return o;
     }
 
-    /// <summary>为销售单补一条明细（成本快照用于毛利核算）</summary>
-    protected SaleOrderDetail SeedSaleDetail(SaleOrder order, int productId, decimal qty, decimal unitPrice, decimal costPrice)
+    /// <summary>为销售单补一条明细（成本快照用于毛利核算）。
+    /// 挂牌价快照 originalPrice 默认等于成交价（即无促销）；要测促销让利时显式传一个更高的挂牌价。</summary>
+    protected SaleOrderDetail SeedSaleDetail(SaleOrder order, int productId, decimal qty, decimal unitPrice, decimal costPrice, decimal? originalPrice = null)
     {
         var p = GetProduct(productId);
         var d = new SaleOrderDetail
         {
             OrderId = order.Id, ProductId = productId, ProductName = p.Name, Barcode = p.Barcode,
-            Quantity = qty, UnitPrice = unitPrice, CostPrice = costPrice,
+            Quantity = qty, UnitPrice = unitPrice, OriginalPrice = originalPrice ?? unitPrice, CostPrice = costPrice,
             SubTotal = Math.Round(qty * unitPrice, 2),
         };
         Db.SaleOrderDetails.Add(d);
         Db.SaveChanges();
         return d;
+    }
+
+    /// <summary>
+    /// 直接落库一张销售退货单（含一行明细），用于报表退货冲减口径测试。
+    /// 退款额按原单成交单价计，与 SaleService.CreateReturnAsync 的口径一致。
+    /// </summary>
+    protected SaleReturn SeedSaleReturn(SaleOrder order, SaleOrderDetail detail, decimal qty, DateTime createdAt)
+    {
+        var ret = new SaleReturn
+        {
+            OrderNo = $"SR{createdAt:yyyyMMdd}{Db.SaleReturns.Count() + 1:D3}",
+            SaleOrderId = order.Id,
+            RefundMethod = "现金",
+            RefundAmount = Math.Round(qty * detail.UnitPrice, 2),
+            CreatedBy = UserId,
+            CreatedAt = createdAt,
+        };
+        Db.SaleReturns.Add(ret);
+        Db.SaveChanges();
+
+        Db.SaleReturnDetails.Add(new SaleReturnDetail
+        {
+            ReturnId = ret.Id, SaleOrderDetailId = detail.Id, ProductId = detail.ProductId,
+            ProductName = detail.ProductName, Qty = qty, UnitPrice = detail.UnitPrice,
+            SubTotal = Math.Round(qty * detail.UnitPrice, 2),
+        });
+        detail.ReturnedQuantity += qty;
+        Db.SaveChanges();
+        return ret;
     }
 
     /// <summary>直接设置商品库存/成本，跳过采购流程</summary>

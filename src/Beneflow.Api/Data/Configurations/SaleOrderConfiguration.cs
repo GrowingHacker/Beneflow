@@ -15,7 +15,11 @@ public class SaleOrderConfiguration : IEntityTypeConfiguration<SaleOrder>
         e.HasIndex(x => x.CreatedAt);
         e.Property(x => x.TotalAmount).HasPrecision(12, 2);
         e.Property(x => x.DiscountAmount).HasPrecision(12, 2);
+        // 折率单位是「折」（8.80 = 8.8 折），一位小数足够，留两位便于将来接会员等级折扣
+        e.Property(x => x.DiscountRate).HasPrecision(5, 2);
+        e.Property(x => x.RoundOffAmount).HasPrecision(12, 2);
         e.Property(x => x.PayAmount).HasPrecision(12, 2);
+        e.Property(x => x.ReceivedAmount).HasPrecision(12, 2);
         e.Property(x => x.CashAmount).HasPrecision(12, 2);
         e.Property(x => x.ChangeAmount).HasPrecision(12, 2);
         e.Property(x => x.PayMethod).HasMaxLength(20);

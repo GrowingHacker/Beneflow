@@ -48,7 +48,12 @@ public partial class SaleService : ISaleService
                 ["orderNo"] = r.o.OrderNo,
                 ["totalAmount"] = r.o.TotalAmount,
                 ["discountAmount"] = r.o.DiscountAmount,
+                // 折扣率带「折」单位输出成文本：写成裸数字 8.8 会被读成 8.8%（或 88%），单位误会一次就错一次；
+                // 且折率不可加总，本就不该做成数值列参与合计。按金额录入的单据留空，与「未按折率录入」区分
+                ["discountRate"] = r.o.DiscountRate.HasValue ? $"{r.o.DiscountRate.Value:0.##}折" : "",
+                ["roundOffAmount"] = r.o.RoundOffAmount,
                 ["payAmount"] = r.o.PayAmount,
+                ["receivedAmount"] = r.o.ReceivedAmount,
                 ["payMethod"] = r.o.PayMethod,
                 ["cashAmount"] = r.o.CashAmount,
                 ["changeAmount"] = r.o.ChangeAmount,

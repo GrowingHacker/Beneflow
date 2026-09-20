@@ -1,5 +1,6 @@
-using Beneflow.Api.Models;
+﻿using Beneflow.Api.Models;
 using Beneflow.Api.Models.Entities;
+using Beneflow.Api.Utils;
 using Microsoft.EntityFrameworkCore;
 
 namespace Beneflow.Tests.Unit;
@@ -228,6 +229,150 @@ public class ProductServiceTests : TestBase
         Assert.Equal(0, r.Code);
         Assert.True(await Db.Categories.AnyAsync(c => c.Name == "饮料"));
         Assert.NotEqual(CategoryId, GetProduct(ProductAId).CategoryId);
+    }
+
+    // ================= 档案优惠（优惠方案只在商品档案里定义） =================
+
+    /// <summary>取商品列表里指定商品的那一行（列表项是字典、字段名 camelCase）</summary>
+    private async Task<Dictionary<string, object?>> ListRow(int productId)
+    {
+        var page = await ProductSvc.ListAsync(null, 1, 50);
+        var rows = page.List!.Cast<Dictionary<string, object?>>();
+        return rows.First(r => Convert.ToInt32(r["id"]) == productId);
+    }
+
+    [Fact]
+    public async Task CreateAsync_PricePromo_StoredAndExposedAsEffectivePrice()
+    {
+        var dto = NewProduct("促销商品", "P001", 9.90m);
+        dto.PromoType = PromoHelper.TypePrice;
+        dto.PromoPrice = 7.50m;
+        var r = await ProductSvc.CreateAsync(dto);
+        Assert.Equal(0, r.Code);
+
+        var id = GetResultDataProp<int>(r.Data!, "id");
+        var p = GetProduct(id);
+        Assert.Equal(PromoHelper.TypePrice, p.PromoType);
+        Assert.Equal(7.50m, p.PromoPrice);
+        Assert.Equal(0m, p.PromoRate);                 // 与当前类型无关的数值归零
+
+        var row = await ListRow(id);
+        Assert.Equal(9.90m, Convert.ToDecimal(row["salePrice"]));       // 挂牌价不动
+        Assert.Equal(7.50m, Convert.ToDecimal(row["effectivePrice"]));  // 成交价按促销算
+        Assert.True(Convert.ToBoolean(row["promoActive"]));
+        Assert.Equal("特价 ¥7.50", row["promoText"]);
+    }
+
+    [Fact]
+    public async Task CreateAsync_RatePromo_EffectivePriceIsRounded()
+    {
+        var dto = NewProduct("打折商品", "P002", 9.90m);
+        dto.PromoType = PromoHelper.TypeRate;
+        dto.PromoRate = 8.8m;
+        var r = await ProductSvc.CreateAsync(dto);
+        Assert.Equal(0, r.Code);
+
+        var id = GetResultDataProp<int>(r.Data!, "id");
+        var row = await ListRow(id);
+        // 9.90 × 8.8 / 10 = 8.712 ⇒ 8.71
+        Assert.Equal(8.71m, Convert.ToDecimal(row["effectivePrice"]));
+        Assert.Equal("8.8 折", row["promoText"]);
+    }
+
+    [Fact]
+    public async Task CreateAsync_PromoPriceAboveSalePrice_ReturnsError()
+    {
+        var dto = NewProduct("促销越界", "P003", 5.00m);
+        dto.PromoType = PromoHelper.TypePrice;
+        dto.PromoPrice = 6.00m;
+
+        var r = await ProductSvc.CreateAsync(dto);
+        Assert.NotEqual(0, r.Code);
+        Assert.Contains("促销价不能高于售价", r.Message);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(11)]
+    public async Task CreateAsync_RatePromoOutOfRange_ReturnsError(decimal rate)
+    {
+        var dto = NewProduct("折扣越界", "P004", 9.90m);
+        dto.PromoType = PromoHelper.TypeRate;
+        dto.PromoRate = rate;
+
+        var r = await ProductSvc.CreateAsync(dto);
+        Assert.NotEqual(0, r.Code);
+        Assert.Contains("折扣需在 0.1 ~ 10 折之间", r.Message);
+    }
+
+    [Fact]
+    public async Task CreateAsync_UnknownPromoType_ReturnsError()
+    {
+        var dto = NewProduct("未知优惠", "P005", 9.90m);
+        dto.PromoType = "买一送一";
+
+        var r = await ProductSvc.CreateAsync(dto);
+        Assert.NotEqual(0, r.Code);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_SetPromo_ThenClear_ResetsValues()
+    {
+        var r = await ProductSvc.UpdateAsync(ProductAId,
+            Json("{\"promoType\":\"折扣\",\"promoRate\":8.8,\"promoStartAt\":\"2026-09-01\",\"promoEndAt\":\"2026-09-30\"}"));
+        Assert.Equal(0, r.Code);
+
+        var p = GetProduct(ProductAId);
+        Assert.Equal(PromoHelper.TypeRate, p.PromoType);
+        Assert.Equal(8.8m, p.PromoRate);
+        Assert.Equal(new DateTime(2026, 9, 1), p.PromoStartAt);                     // 归一化为当天零点
+        Assert.Equal(new DateTime(2026, 9, 30, 23, 59, 59), p.PromoEndAt);          // 含结束日整天
+
+        // 清成「无优惠」后，折率不再残留（否则下次打开弹窗会看到幽灵折率）
+        var r2 = await ProductSvc.UpdateAsync(ProductAId, Json("{\"promoType\":\"\"}"));
+        Assert.Equal(0, r2.Code);
+
+        var p2 = GetProduct(ProductAId);
+        Assert.Equal("", p2.PromoType);
+        Assert.Equal(0m, p2.PromoRate);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_ExpiredPromo_ListedAsInactive()
+    {
+        var r = await ProductSvc.UpdateAsync(ProductAId,
+            Json("{\"promoType\":\"特价\",\"promoPrice\":5,\"promoEndAt\":\"2020-01-01\"}"));
+        Assert.Equal(0, r.Code);
+
+        var row = await ListRow(ProductAId);
+        Assert.False(Convert.ToBoolean(row["promoActive"]));                                  // 已过期 ⇒ 未生效
+        Assert.Equal("特价 ¥5.00", row["promoText"]);                              // 文案仍保留，列表显示「未生效」
+        Assert.Equal(Convert.ToDecimal(row["salePrice"]), Convert.ToDecimal(row["effectivePrice"]));
+    }
+
+    [Fact]
+    public async Task UpdateAsync_PromoSwitchOff_NotActive()
+    {
+        var r = await ProductSvc.UpdateAsync(ProductAId,
+            Json("{\"promoType\":\"特价\",\"promoPrice\":5,\"promoEnabled\":false}"));
+        Assert.Equal(0, r.Code);
+
+        var row = await ListRow(ProductAId);
+        Assert.False(Convert.ToBoolean(row["promoActive"]));
+        Assert.Equal(Convert.ToDecimal(row["salePrice"]), Convert.ToDecimal(row["effectivePrice"]));
+    }
+
+    [Fact]
+    public async Task GetByBarcode_ActivePromo_ReturnsEffectivePrice()
+    {
+        await ProductSvc.UpdateAsync(ProductAId, Json("{\"promoType\":\"特价\",\"promoPrice\":6.5}"));
+
+        var r = await ProductSvc.GetByBarcode("A001");
+        Assert.Equal(0, r.Code);
+        Assert.Equal(10.00m, Prop<decimal>(r.Data, "SalePrice"));
+        Assert.Equal(6.50m, Prop<decimal>(r.Data, "EffectivePrice"));
+        Assert.True(Prop<bool>(r.Data, "PromoActive"));
+        Assert.Equal("特价 ¥6.50", Prop<string>(r.Data, "PromoText"));
     }
 
     // ================= 删除商品 =================

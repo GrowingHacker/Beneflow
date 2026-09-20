@@ -1,4 +1,4 @@
-<div>
+﻿<div>
   <el-tabs v-model="activeTab">
     <!-- ============ 收银 ============ -->
     <el-tab-pane label="🛒 收银" name="pos">
@@ -26,8 +26,15 @@
                   <div class="muted" style="font-size:12px;">{{ row.barcode }}</div>
                 </template>
               </el-table-column>
-              <el-table-column label="单价" width="90">
-                <template #default="{ row }">{{ common.money(row.salePrice) }}<span class="muted" style="font-size:11px;">/{{ row.unit || '件' }}</span></template>
+              <el-table-column label="单价" width="112">
+                <template #default="{ row }">
+                  <template v-if="row.originPrice > row.salePrice">
+                    <s class="muted" style="font-size:11px;">{{ common.money(row.originPrice) }}</s>
+                    <span :title="row.promoText || ''" style="color:#f56c6c;font-weight:600;">{{ common.money(row.salePrice) }}</span>
+                  </template>
+                  <template v-else>{{ common.money(row.salePrice) }}</template>
+                  <span class="muted" style="font-size:11px;">/{{ row.unit || '件' }}</span>
+                </template>
               </el-table-column>
               <el-table-column label="数量 / 重量" width="140">
                 <template #default="{ row }">
@@ -64,7 +71,7 @@
               <div v-for="g in weightedGroups" :key="g.category" style="margin-bottom:14px;">
                 <div class="muted" style="margin-bottom:6px;font-size:13px;">{{ g.category }}</div>
                 <el-button v-for="p in g.items" :key="p.id" size="small" style="margin:4px;" @click="openWeighDialog(p)">
-                  {{ p.name }}<span class="muted" style="font-size:11px;margin-left:4px;">{{ common.money(p.salePrice) }}/{{ p.unit || '斤' }}</span>
+                  {{ p.name }}<span class="muted" style="font-size:11px;margin-left:4px;">{{ common.money(effOf(p)) }}/{{ p.unit || '斤' }}</span>
                 </el-button>
               </div>
             </el-tab-pane>
@@ -104,33 +111,52 @@
           <el-button type="success" @click="exportOrdersExcel">导出 Excel</el-button>
         </div>
         <div class="table-wrap">
-          <el-table :data="orders" v-loading="ordersLoading" border size="small">
-            <el-table-column label="单号" prop="orderNo" width="160" />
-            <el-table-column label="总金额" width="100"><template #default="{ row }">{{ common.money(row.totalAmount) }}</template></el-table-column>
-            <el-table-column label="实收" width="100"><template #default="{ row }">{{ common.money(row.payAmount) }}</template></el-table-column>
-            <el-table-column label="收款方式" prop="payMethod" width="100" />
-            <el-table-column label="状态" width="130">
+          <el-table :data="orders" v-loading="ordersLoading" border size="small"
+                    :show-summary="orders.length > 0" :summary-method="orderSummary">
+            <el-table-column label="单号" prop="orderNo" width="136" />
+            <el-table-column label="商品总额" width="96">
+              <template #header><span title="未优惠前的原价合计（挂牌价 × 数量）">商品总额</span></template>
+              <template #default="{ row }">{{ common.money(row.totalAmount) }}</template>
+            </el-table-column>
+            <el-table-column label="优惠" width="80">
+              <template #header><span title="档案促销让利 + 整单优惠（按商品让了多少，详见「详情」）">优惠</span></template>
+              <template #default="{ row }">{{ common.money(row.discountAmount) }}</template>
+            </el-table-column>
+            <el-table-column label="抹零" width="80"><template #default="{ row }">{{ common.money(row.roundOffAmount) }}</template></el-table-column>
+            <el-table-column label="应收" width="96"><template #default="{ row }">{{ common.money(row.payAmount) }}</template></el-table-column>
+            <el-table-column label="实收" width="96"><template #default="{ row }">{{ common.money(row.receivedAmount) }}</template></el-table-column>
+            <el-table-column label="找零" width="80"><template #default="{ row }">{{ common.money(row.changeAmount) }}</template></el-table-column>
+            <el-table-column label="收款方式" prop="payMethod" width="90" />
+            <el-table-column label="状态" width="120">
               <template #default="{ row }">
                 <el-tag :type="row.status === '已完成' ? 'success' : (row.status === '已作废' ? 'info' : 'warning')" size="small">{{ row.status }}</el-tag>
                 <el-tag v-if="row.isCredit" :type="row.creditSettled === true ? 'info' : 'danger'" size="small" style="margin-left:4px;">{{ row.creditSettled === true ? '已结' : '欠' }}</el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="操作人" prop="createdByName" width="100" />
-            <el-table-column label="时间" prop="createdAt" width="150" />
-            <el-table-column label="操作" width="70" align="center">
+            <el-table-column label="操作人" prop="createdByName" width="86" />
+            <el-table-column label="时间" prop="createdAt" width="130" />
+            <!-- 纯图标按钮组必须用 .op-btns 包一层：Element Plus 自带 .el-button+.el-button{margin-left:12px}，
+                 两个按钮实测 44+12+44=100px，在 100px 列里正好挤成上下两行（探针测到 top 相差 32px）。
+                 .op-btns 把相邻间距归零、内边距收到 6px（与 StockCheck / Products 等页一致）。 -->
+            <el-table-column label="操作" width="100" align="center">
               <template #default="{ row }">
-                <el-button v-if="row.status !== '已作废'" text type="danger" title="作废订单" @click="voidOrder(row)">
-                  <el-icon><CircleClose /></el-icon>
-                </el-button>
-                <span v-else style="color:#999;">—</span>
+                <div class="op-btns">
+                  <el-button text type="primary" title="详情" @click="openDetail(row)"><el-icon><View /></el-icon></el-button>
+                  <el-button v-if="row.status !== '已作废'" text type="danger" title="作废订单" @click="voidOrder(row)">
+                    <el-icon><CircleClose /></el-icon>
+                  </el-button>
+                  <span v-else style="color:#999;">—</span>
+                </div>
               </template>
             </el-table-column>
           </el-table>
         </div>
         <div class="pagination-wrap">
+          <!-- 与 Products / Purchases / StockLog 等列表页统一：带「N 条/页」切换器 -->
           <el-pagination
             v-model:current-page="orderPage" v-model:page-size="orderPageSize"
-            :total="orderTotal" layout="total, prev, pager, next" @current-change="loadOrders" />
+            :total="orderTotal" :page-sizes="[10,20,50]" layout="total, sizes, prev, pager, next"
+            @size-change="loadOrders" @current-change="loadOrders" />
         </div>
       </div>
     </el-tab-pane>
@@ -149,7 +175,7 @@
         </template>
       </el-table-column>
       <el-table-column label="条码" prop="barcode" width="140" />
-      <el-table-column label="售价" width="90"><template #default="{ row }">{{ common.money(row.salePrice) }}</template></el-table-column>
+      <el-table-column label="售价" width="90"><template #default="{ row }">{{ common.money(effOf(row)) }}</template></el-table-column>
       <el-table-column label="库存" prop="stockQuantity" width="70" />
       <el-table-column label="操作" width="70" align="center"><template #default="{ row }"><el-button text type="primary" title="加入购物车" @click="pickProduct(row)"><el-icon><Plus /></el-icon></el-button></template></el-table-column>
     </el-table>
@@ -158,7 +184,14 @@
   <!-- 称重输入弹窗 -->
   <el-dialog v-model="weighDialog" :title="'称重：' + (weighProduct?.name || '')" width="360px" @opened="focusWeighInput">
     <div style="text-align:center;margin-bottom:16px;">
-      <div class="muted">{{ common.money(weighProduct?.salePrice || 0) }} / {{ weighProduct?.unit || '斤' }}</div>
+      <div class="muted">
+        <template v-if="weighProduct && Number(weighProduct.salePrice) > effOf(weighProduct)">
+          <s>{{ common.money(weighProduct.salePrice) }}</s>
+          <span :title="promoTag(weighProduct)" style="color:#f56c6c;font-weight:600;margin-left:4px;">{{ common.money(effOf(weighProduct)) }}</span>
+        </template>
+        <template v-else>{{ common.money(effOf(weighProduct)) }}</template>
+        / {{ weighProduct?.unit || '斤' }}
+      </div>
     </div>
     <el-form label-width="70px">
       <el-form-item label="重量">
@@ -166,7 +199,7 @@
         <span style="margin-left:10px;">{{ weighProduct?.unit || '斤' }}</span>
       </el-form-item>
       <el-form-item label="金额">
-        <span class="cart-total" style="font-size:22px;">{{ common.money((weighProduct?.salePrice || 0) * weighQty) }}</span>
+        <span class="cart-total" style="font-size:22px;">{{ common.money(effOf(weighProduct) * weighQty) }}</span>
       </el-form-item>
     </el-form>
     <template #footer>
@@ -175,15 +208,20 @@
     </template>
   </el-dialog>
 
-  <!-- 结算弹窗 -->
-  <el-dialog v-model="settleDialog" title="结算" width="420px" @closed="onSettleClosed">
+  <!-- 结算弹窗：优惠方案只在商品档案里定义，收银台不提供任何让利入口，
+       故这里只有「商品总额（已含档案优惠）→ 抹零 → 应收 → 收款额 → 找零」 -->
+  <el-dialog v-model="settleDialog" title="结算" width="440px" @closed="onSettleClosed">
     <div style="text-align:center; margin-bottom:14px;">
       <div class="muted">应收金额</div>
       <div class="cart-total" style="font-size:30px;">{{ common.money(payAmount) }}</div>
     </div>
     <el-form label-width="90px">
-      <el-form-item label="优惠金额">
-        <el-input-number v-model="discount" :min="0" :max="totalAmount" :precision="2" controls-position="right" @change="recomputePay" />
+      <el-form-item label="商品总额">
+        <span>{{ common.money(totalAmount) }}</span>
+      </el-form-item>
+      <el-form-item v-if="payMethod === '现金'" label="抹零金额">
+        <el-input-number v-model="roundOff" :min="0" :max="totalAmount" :precision="2" controls-position="right" />
+        <el-button text type="primary" @click="roundOffToJiao">抹到角</el-button>
       </el-form-item>
       <el-form-item label="收款方式">
         <el-radio-group v-model="payMethod">
@@ -193,7 +231,7 @@
           <el-radio-button label="赊账">赊账</el-radio-button>
         </el-radio-group>
       </el-form-item>
-      <el-form-item v-if="payMethod === '现金'" label="实收">
+      <el-form-item v-if="payMethod === '现金'" label="收款金额">
         <el-input-number v-model="cashReceived" :min="0" :precision="2" controls-position="right" style="width:180px;" />
         <span style="margin-left:10px;">找零 <b class="success-text">{{ common.money(changeAmount) }}</b></span>
       </el-form-item>
@@ -210,6 +248,62 @@
     <template #footer>
       <el-button @click="settleDialog=false">取消</el-button>
       <el-button type="primary" :loading="settling" @click="confirmSettle">{{ payMethod === '赊账' ? '确认结算' : '确认收款' }}</el-button>
+    </template>
+  </el-dialog>
+
+  <!-- 销售单详情：优惠是**商品级**的（方案定义在商品档案里、按行生效），所以「让了多少」只能按行看。
+       排版三层：单据信息一行 → 金额链一行（商品总额 − 优惠 − 抹零 = 应收，应收突出）→ 商品明细表。
+       金额链不用 el-descriptions：12 个格子找不出「钱是怎么算出来的」，横排成链才读得懂。 -->
+  <el-dialog v-model="detailDialog" title="销售单详情" width="860px">
+    <div class="sd-head">
+      <span class="sd-no">{{ detail.orderNo }}</span>
+      <el-tag size="small" :type="detail.status === '已完成' ? 'success' : (detail.status === '已作废' ? 'info' : 'warning')">{{ detail.status }}</el-tag>
+      <span class="muted">{{ detail.createdAt }}</span>
+      <span class="muted">{{ detail.createdByName }}</span>
+      <span class="muted">{{ detail.payMethod }}</span>
+      <el-tag v-if="detail.isCredit" size="small" :type="detail.creditSettled === true ? 'info' : 'danger'">{{ detail.creditSettled === true ? '已结清' : '未结清' }}</el-tag>
+      <span v-if="detail.wechatId" class="muted">微信 {{ detail.wechatId }}</span>
+    </div>
+
+    <div class="sd-amounts">
+      <div class="sd-amt"><div class="sd-amt-label">商品总额</div><div class="sd-amt-value">{{ common.money(detail.totalAmount) }}</div></div>
+      <div class="sd-op">−</div>
+      <div class="sd-amt"><div class="sd-amt-label">优惠</div><div class="sd-amt-value danger-text">{{ common.money(detail.discountAmount) }}</div></div>
+      <div class="sd-op">−</div>
+      <div class="sd-amt"><div class="sd-amt-label">抹零</div><div class="sd-amt-value danger-text">{{ common.money(detail.roundOffAmount) }}</div></div>
+      <div class="sd-op">=</div>
+      <div class="sd-amt sd-amt-main"><div class="sd-amt-label">应收</div><div class="sd-amt-value">{{ common.money(detail.payAmount) }}</div></div>
+      <div class="sd-amt sd-amt-tail"><div class="sd-amt-label">实收</div><div class="sd-amt-value">{{ common.money(detail.receivedAmount) }}</div></div>
+      <div class="sd-amt"><div class="sd-amt-label">找零</div><div class="sd-amt-value">{{ common.money(detail.changeAmount) }}</div></div>
+    </div>
+
+    <div class="sd-items">
+      <div class="sd-items-title">商品明细<span class="muted">让利按行计：挂牌价 → 成交价；折率 = 成交价 ÷ 挂牌价</span></div>
+      <el-table :data="detail.items" size="small" border max-height="340">
+        <el-table-column label="商品" min-width="170">
+          <template #default="{ row }">{{ row.name }}<div class="muted" style="font-size:12px;">{{ row.barcode || '无条码' }}</div></template>
+        </el-table-column>
+        <el-table-column label="数量" width="80" align="right"><template #default="{ row }">{{ row.qty }}</template></el-table-column>
+        <el-table-column label="挂牌价" width="92" align="right"><template #default="{ row }">{{ common.money(row.originalPrice) }}</template></el-table-column>
+        <el-table-column label="成交价" width="92" align="right"><template #default="{ row }">{{ common.money(row.unitPrice) }}</template></el-table-column>
+        <el-table-column label="让利" width="92" align="right">
+          <template #default="{ row }">
+            <span v-if="savedOf(row) > 0" class="danger-text">-{{ common.money(savedOf(row)) }}</span>
+            <span v-else class="sd-dim">—</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="折率" width="76" align="right">
+          <template #default="{ row }">
+            <span v-if="rateOf(row)">{{ rateOf(row) }}</span>
+            <span v-else class="sd-dim">—</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="小计" width="100" align="right"><template #default="{ row }">{{ common.money(row.subTotal) }}</template></el-table-column>
+        <el-table-column label="已退" width="72" align="right"><template #default="{ row }">{{ row.returnedQty > 0 ? row.returnedQty : '—' }}</template></el-table-column>
+      </el-table>
+    </div>
+    <template #footer>
+      <el-button @click="detailDialog=false">关闭</el-button>
     </template>
   </el-dialog>
 </div>
@@ -236,7 +330,7 @@ function pageSetup(deps) {
     if (totalWeight.value > 0) parts.push(parseFloat(totalWeight.value.toFixed(3)) + ' 斤');
     return parts.length ? parts.join(' + ') : '0 件';
   });
-  const totalAmount = computed(() => cart.value.reduce((s, i) => s + Number(i.salePrice || 0) * Number(i.qty || 0), 0));
+  const totalAmount = computed(() => round2(cart.value.reduce((s, i) => s + Number(i.salePrice || 0) * Number(i.qty || 0), 0)));
 
   function focusScan() { if (scanRef.value) scanRef.value.focus(); }
 
@@ -262,6 +356,15 @@ function pageSetup(deps) {
     } catch (err) {}
   }
 
+  // 档案优惠只在商品档案里定义，收银台只负责执行与展示：单价一律取后端算好的 effectivePrice
+  // （前端不复刻促销折率的舍入——C# 银行家舍入与 JS 半点向上会偶发差 1 分），缺失时回落挂牌价
+  function effOf(p) {
+    if (!p) return 0;
+    return Number(p.effectivePrice != null ? p.effectivePrice : p.salePrice) || 0;
+  }
+  // 优惠文案（特价 ¥4.72 / 8.8 折），只在生效时展示
+  function promoTag(p) { return (p && p.promoActive && p.promoText) ? p.promoText : ''; }
+
   function addProduct(p) {
     // 称重商品一律先弹称重窗输入重量，不直接入车
     if (p.isWeighted) { openWeighDialog(p); return; }
@@ -271,8 +374,9 @@ function pageSetup(deps) {
     } else {
       cart.value.push({
         id: p.id, barcode: p.barcode, name: p.name,
-        salePrice: Number(p.salePrice), qty: 1,
-        isWeighted: false, unit: p.unit || '',
+        // salePrice = 成交单价（小计/合计/提交都用它）；originPrice 仅用于显示「原价 → 成交价」
+        salePrice: effOf(p), originPrice: Number(p.salePrice) || 0, promoText: promoTag(p),
+        qty: 1, isWeighted: false, unit: p.unit || '',
       });
     }
     focusScan();
@@ -323,7 +427,8 @@ function pageSetup(deps) {
     } else {
       cart.value.push({
         id: p.id, barcode: p.barcode || '', name: p.name,
-        salePrice: Number(p.salePrice), qty: Number(weighQty.value),
+        salePrice: effOf(p), originPrice: Number(p.salePrice) || 0, promoText: promoTag(p),
+        qty: Number(weighQty.value),
         isWeighted: true, unit: p.unit || '斤',
       });
     }
@@ -360,8 +465,10 @@ function pageSetup(deps) {
   function pickProduct(p) { addProduct(p); pickerDialog.value = false; }
 
   // ---- 结算 ----
+  // 收银台不提供任何让利入口：让利只在商品档案里定义（见 Products.html 的优惠方案）。
+  // 所以这里没有整单优惠/折扣的输入，只有抹零（现金取整习惯）。
   const settleDialog = ref(false);
-  const discount = ref(0);
+  const roundOff = ref(0);
   const payMethod = ref('现金');
   const cashReceived = ref(0);
   const wechatId = ref('');
@@ -369,23 +476,56 @@ function pageSetup(deps) {
   const creditRemark = ref('');
   const settling = ref(false);
 
-  const payAmount = computed(() => Math.max(0, totalAmount.value - (discount.value || 0)));
-  const changeAmount = computed(() => Math.max(0, (cashReceived.value || 0) - payAmount.value));
+  // ⚠️ 必须与后端 Math.Round(x,2) 的银行家舍入（中点取偶）保持一致，不能用 JS 的 Math.round
+  //    （中点向上），否则合计栏显示的数与后端落库的数会差 1 分。
+  function round2(x) {
+    const cents = Math.round(x * 100 * 1e4) / 1e4;   // 先消掉浮点噪声，0.945 在 JS 里可能存成 0.9449999…
+    const lower = Math.floor(cents);
+    const rest = cents - lower;
+    if (rest > 0.5) return (lower + 1) / 100;
+    if (rest < 0.5) return lower / 100;
+    return (lower % 2 === 0 ? lower : lower + 1) / 100;
+  }
+
+  // 金额链：商品总额（已含档案优惠）− 抹零 = 应收；应收 + 找零 ⇒ 递钞额
+  const afterDiscount = computed(() => totalAmount.value);
+  const payAmount = computed(() => round2(Math.max(0, totalAmount.value - (roundOff.value || 0))));
+  const changeAmount = computed(() => round2(Math.max(0, (cashReceived.value || 0) - payAmount.value)));
 
   function openSettle() {
-    discount.value = 0; payMethod.value = '现金'; cashReceived.value = 0; wechatId.value = ''; creditPhone.value = ''; creditRemark.value = '';
+    roundOff.value = 0; payMethod.value = '现金'; cashReceived.value = 0;
+    wechatId.value = ''; creditPhone.value = ''; creditRemark.value = '';
     settleDialog.value = true;
   }
+
   function recomputePay() {}
   function onSettleClosed() {}
 
+  // 折率显示：8.80 → 8.8折；未按折率录入返回空串（调用方显示「—」）
+  function fmtRate(v) {
+    if (v === null || v === undefined) return '';
+    return (Math.round(v * 100) / 100).toString() + '折';
+  }
+
+  // 抹零到角：把抹零金额补成「折后金额 − 向下取整到角」，与门店「抹零头」习惯一致
+  function roundOffToJiao() {
+    const base = afterDiscount.value;
+    roundOff.value = Math.round((base - Math.floor(base * 10) / 10) * 100) / 100;
+  }
+
   async function confirmSettle() {
-    if (payMethod.value === '现金' && (cashReceived.value || 0) < payAmount.value) { toast('实收金额不足', 'warning'); return; }
+    if (payMethod.value === '现金' && (cashReceived.value || 0) < payAmount.value) { toast('收款金额不足', 'warning'); return; }
     settling.value = true;
+    const isCash = payMethod.value === '现金';
     const payload = {
       items: cart.value.map(i => ({ productId: i.id, barcode: i.barcode, name: i.name, qty: i.qty, unitPrice: i.salePrice, subTotal: i.salePrice * i.qty })),
-      totalAmount: totalAmount.value, discountAmount: discount.value, payAmount: payAmount.value,
-      payMethod: payMethod.value, cashAmount: payMethod.value === '现金' ? cashReceived.value : 0,
+      totalAmount: totalAmount.value,
+      // 收银台不提供任何让利入口，整单优惠恒为 0；字段保留是为了与后端「总额 − 优惠 − 抹零 = 应收」口径对齐
+      discountAmount: 0,
+      discountRate: null,
+      roundOffAmount: isCash ? roundOff.value : 0,
+      payAmount: payAmount.value,
+      payMethod: payMethod.value, cashAmount: isCash ? cashReceived.value : 0,
       changeAmount: changeAmount.value, isCredit: payMethod.value === '赊账', wechatId: wechatId.value,
       phone: creditPhone.value, remark: creditRemark.value
     };
@@ -409,6 +549,51 @@ function pageSetup(deps) {
   const orderPage = ref(1);
   const orderPageSize = ref(20);
   const orderTotal = ref(0);
+  // 合计走后端「同查询条件的全量合计（剔除已作废）」，不是当前页合计
+  const orderSummaryInfo = ref(null);
+
+  // el-table 合计行：只映射金额列，其余留空；标签固定说明口径
+  function orderSummary({ columns }) {
+    const s = orderSummaryInfo.value || {};
+    const fieldOf = {
+      '商品总额': 'totalAmount', '优惠': 'discountAmount',
+      '抹零': 'roundOffAmount',
+      '应收': 'payAmount', '实收': 'receivedAmount', '找零': 'changeAmount',
+    };
+    return columns.map((col, i) => {
+      if (i === 0) return '合计（不含已作废）';
+      const key = fieldOf[col.label];
+      return key ? common.money(s[key] || 0) : '';
+    });
+  }
+
+  // ---- 销售单详情 ----
+  // 让利是商品级的（优惠方案在商品档案里定义、按行生效），所以「让了多少」只能按行看：
+  //   行让利 = 该行挂牌价小计 − 该行成交价小计（两侧各自先四舍五入，见 savedOf）；订单「优惠」即各行让利合计。
+  const detailDialog = ref(false);
+  const detail = ref({});
+
+  async function openDetail(row) {
+    try {
+      detail.value = await api.get('/sales/' + row.id);
+      detailDialog.value = true;
+    } catch (e) {}
+  }
+
+  // ⚠️ 必须与后端一致：后端是按行先各自 Math.Round(qty×价, 2) 再相减（不是先相减再乘数量）。
+  //    直接 (挂牌价−成交价)×数量 会因浮点与舍入顺序差 1 分（实测 (6.5−5.8)×1.235 得 0.86，后端给 0.87）。
+  function savedOf(row) {
+    const p = Number(row.originalPrice || 0), u = Number(row.unitPrice || 0), q = Number(row.qty || 0);
+    const v = round2(round2(p * q) - round2(u * q));
+    return v > 0 ? v : 0;
+  }
+
+  // 等效折率 = 成交价 ÷ 挂牌价（特价也换算成折率，一眼看出让利力度）
+  function rateOf(row) {
+    const p = Number(row.originalPrice || 0), u = Number(row.unitPrice || 0);
+    if (p <= 0 || u <= 0 || u >= p) return '';
+    return fmtRate(u / p * 10);
+  }
 
   async function loadOrders() {
     ordersLoading.value = true;
@@ -423,6 +608,7 @@ function pageSetup(deps) {
       if (to) params.dateTo = to;
       const res = await api.get('/sales', { params });
       orders.value = res.list || []; orderTotal.value = res.total || 0;
+      orderSummaryInfo.value = res.summary || null;
     } catch (e) {}
     finally { ordersLoading.value = false; }
   }
@@ -459,15 +645,17 @@ function pageSetup(deps) {
 
   return {
     activeTab, rightTab, scanText, scanRef, cart, qtySummary, totalAmount,
-    onScanEnter, recompute, clearCart, focusScan,
+    onScanEnter, recompute, clearCart, focusScan, effOf, promoTag,
     weightedProducts, weightedGroups, loadWeightedProducts,
     weighDialog, weighProduct, weighQty, weighInputRef, openWeighDialog, focusWeighInput, confirmWeigh,
     parked, parkOrder, restorePark,
     pickerDialog, pickKeyword, pickList, searchProducts, pickProduct,
-    settleDialog, discount, payMethod, cashReceived, wechatId, creditPhone, creditRemark, settling,
-    payAmount, changeAmount, openSettle, recomputePay, onSettleClosed, confirmSettle,
+    settleDialog, fmtRate,
+    roundOff, afterDiscount, payMethod, cashReceived, wechatId, creditPhone, creditRemark, settling,
+    payAmount, changeAmount, openSettle, recomputePay, onSettleClosed, confirmSettle, roundOffToJiao,
     orders, ordersLoading, orderKeyword, dateFrom, dateTo, payMethodFilter,
-    orderPage, orderPageSize, orderTotal, loadOrders, searchOrders,
+    orderPage, orderPageSize, orderTotal, loadOrders, searchOrders, orderSummaryInfo, orderSummary,
+    detailDialog, detail, openDetail, savedOf, rateOf,
     exportOrdersCsv, exportOrdersExcel, voidOrder,
     common, toast
   };

@@ -242,6 +242,24 @@ body {
 .warn-text { color:#e6a23c; }
 .success-text { color:#67c23a; }
 
+/* ===== 弹窗表单分段标题 =====
+   字段多于 10 个的弹窗（如商品新增/编辑）按业务分组：基本信息 / 优惠方案 / 库存与其他。
+   与「导入预览」的 imp-section-title 同款观感，但这里是通用件，别在页面里再写行内样式。
+   放在 el-col 里，靠 el-row 的 gutter 与左侧字段标签对齐。 */
+.form-section-title {
+  display: flex; align-items: baseline; gap: 8px;
+  font-size: 13px; font-weight: 600; color: #606266;
+  padding-bottom: 8px; margin: 2px 0 16px; border-bottom: 1px solid #f2f3f5;
+}
+.form-section-title .hint { font-size: 12px; font-weight: 400; color: #a8abb2; }
+
+/* 控件右侧的短说明：只放「几个字」的补充，长了会把该行撑高、与邻列错行 */
+.form-hint-inline { font-size: 12px; margin-left: 6px; }
+
+/* 输入框内的单位后缀（如「折」「元」）：默认行高会把 el-input 撑到 34px，
+   与同排 32px 的字段差 2px。line-height:1 让它不参与 wrapper 的高度计算。 */
+.el-input__suffix .unit-text { font-size: 12px; line-height: 1; color: #909399; }
+
 /* ===== 数据字典（系统设置） ===== */
 .dict-head { display:flex; align-items:flex-start; gap:12px; }
 .dict-head .dict-title { font-size:15px; font-weight:600; line-height:1.4; }
@@ -299,6 +317,37 @@ body {
   font-size:13px; font-weight:600; color:#606266;
   padding-bottom:8px; margin-bottom:10px; border-bottom:1px solid #f2f3f5;
 }
+
+/* ===== 销售单详情弹窗 =====
+   三层排版：单据信息一行 → 金额链一行（商品总额 − 优惠 − 抹零 = 应收，应收突出）→ 商品明细表。
+   金额链不用 el-descriptions：12 个格子里找不出「钱是怎么算出来的」，横排成链才读得懂。 */
+.sd-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 14px; }
+.sd-head .sd-no { font-size: 15px; font-weight: 600; color: #303133; }
+.sd-head .muted { font-size: 12px; }
+
+.sd-amounts {
+  display: flex; align-items: stretch; flex-wrap: wrap; gap: 10px;
+  background: #fafbfc; border: 1px solid #eef0f3; border-radius: 6px; padding: 12px 14px;
+}
+.sd-amt { min-width: 92px; }
+.sd-amt-label { font-size: 12px; color: #909399; margin-bottom: 4px; }
+.sd-amt-value { font-size: 15px; font-weight: 600; color: #303133; white-space: nowrap; }
+/* 应收是这一行要看的结果，放大并用主色；其余是过程值。
+   ⚠️ 这里**不能**给应收加 margin-left:auto —— 会把「=」和应收拉开，链就读断了。
+   右对齐交给尾部的「实收 / 找零」（.sd-amt-tail 的 margin-left:auto + 竖分隔线）。 */
+.sd-amt-main .sd-amt-label { color: #409eff; }
+.sd-amt-main .sd-amt-value { font-size: 22px; color: #409eff; }
+.sd-op { align-self: center; color: #c0c4cc; font-size: 14px; }
+.sd-amt-tail { margin-left: auto; border-left: 1px solid #ebeef5; padding-left: 14px; }
+
+.sd-items { margin-top: 18px; }
+.sd-items-title {
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px;
+  font-size: 13px; font-weight: 600; color: #606266; margin-bottom: 8px;
+}
+.sd-items-title .muted { font-size: 12px; font-weight: 400; }
+/* 「无数据」占位：与 el-table 的单元格同色，别在页面里另写行内灰 */
+.sd-dim { color: #999; }
 
 /* ===== 弹窗里的长文本换行 =====
    备份/还原失败时会把 SQL Server 的原始报错整段塞进 MessageBox，里面常带

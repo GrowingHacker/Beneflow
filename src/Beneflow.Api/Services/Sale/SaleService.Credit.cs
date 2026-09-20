@@ -160,10 +160,18 @@ public partial class SaleService : ISaleService
                 c.SettledAt = DateTime.Now;
             }
 
+            // 赊账单的「实收」= 实际收到的净额：开单时记 0（钱没到手），之后每笔还款累加。
+            // 这样销售单列表 / 报表里的实收会随还款逐步补齐，还清时正好等于真正收回的钱
+            // （退货抵欠款的那部分钱没到手，不算实收，故这里只累加还款额）。
+            var saleOrder = await _db.SaleOrders.FirstOrDefaultAsync(o => o.Id == c.SaleOrderId);
+            if (saleOrder != null)
+                saleOrder.ReceivedAmount = Math.Round(saleOrder.ReceivedAmount + payAmount, 2);
+
             await _db.SaveChangesAsync();
 
             var action = isFullSettle ? "结清欠款" : "部分还款";
             var target = $"记录 #{id} 微信号 {c.WechatId}，本次还款 ¥{payAmount}（{payMethod}）";
+            if (saleOrder != null) target += $"，单据 {saleOrder.OrderNo} 实收更新为 ¥{saleOrder.ReceivedAmount}";
             if (isFullSettle) target += "，已全部结清";
 
             _db.OperationLogs.Add(new OperationLog

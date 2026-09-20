@@ -1,4 +1,4 @@
-namespace Beneflow.Api.Models.Entities;
+﻿namespace Beneflow.Api.Models.Entities;
 
 /// <summary>商品分类表（最多三级）</summary>
 public class ProductCategory
@@ -26,6 +26,23 @@ public class Product
     public decimal SalePrice { get; set; }
     /// <summary>成本价（移动加权平均）</summary>
     public decimal CostPrice { get; set; }
+
+    /// <summary>
+    /// 优惠方式：空串=无优惠 / 特价（按 PromoPrice 定价）/ 折扣（按 PromoRate 打折）。
+    /// 优惠方案只在商品档案里定，收银台只负责执行与展示，不提供改动入口。
+    /// </summary>
+    public string PromoType { get; set; } = "";
+    /// <summary>促销价（PromoType=特价 时生效）</summary>
+    public decimal PromoPrice { get; set; }
+    /// <summary>促销折率（PromoType=折扣 时生效，单位「折」：8.80 = 8.8 折 = 88%）</summary>
+    public decimal PromoRate { get; set; }
+    /// <summary>优惠启用开关（关掉即暂停该商品的优惠，起止时间照旧保留）</summary>
+    public bool PromoEnabled { get; set; } = true;
+    /// <summary>优惠开始时间（null = 不限）</summary>
+    public DateTime? PromoStartAt { get; set; }
+    /// <summary>优惠结束时间（null = 不限；含结束日当天）</summary>
+    public DateTime? PromoEndAt { get; set; }
+
     /// <summary>当前库存，支持小数称重件</summary>
     public decimal StockQuantity { get; set; }
     /// <summary>安全库存（低于触发补货提醒）</summary>

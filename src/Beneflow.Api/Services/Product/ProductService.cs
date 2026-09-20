@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using Beneflow.Api.Data;
 using Beneflow.Api.Models;
 using Beneflow.Api.Models.Entities;
@@ -28,6 +28,7 @@ public partial class ProductService : IProductService
                 p.Unit, p.Spec, p.SalePrice, p.CostPrice,
                 p.StockQuantity, p.SafetyStock, p.ImageUrl,
                 p.HasExpiry, p.ShelfLifeDays, p.IsWeighted, p.PinyinCode, p.Status, p.CreatedAt,
+                p.PromoType, p.PromoPrice, p.PromoRate, p.PromoEnabled, p.PromoStartAt, p.PromoEndAt,
             });
 
         var total = await q.CountAsync();
@@ -35,6 +36,9 @@ public partial class ProductService : IProductService
         page = Math.Max(1, page);
         var rows = await q.OrderByDescending(p => p.Id)
             .Skip((page - 1) * pageSize).Take(pageSize).ToListAsync();
+
+        // 优惠是否生效按「同一时刻」判定，避免同一页内各行取到不同的 now
+        var now = DateTime.Now;
 
         // 最近未处理批次的最早到期日（临期角标用）
         var ids = rows.Select(r => r.Id).ToList();
@@ -60,6 +64,8 @@ public partial class ProductService : IProductService
                 ["status"] = r.Status ? "上架" : "下架",
                 ["createdAt"] = r.CreatedAt.ToString("yyyy-MM-dd HH:mm"),
             };
+            AddPromoFields(dict, r.SalePrice, r.PromoType, r.PromoPrice, r.PromoRate,
+                r.PromoEnabled, r.PromoStartAt, r.PromoEndAt, now);
             if (r.HasExpiry && expMap.TryGetValue(r.Id, out var expire))
                 dict["expireDate"] = expire.ToString("yyyy-MM-dd");
             return dict as object;
@@ -118,10 +124,26 @@ public partial class ProductService : IProductService
                 p.StockQuantity, p.SafetyStock, p.HasExpiry, p.ShelfLifeDays,
                 p.IsWeighted, p.PinyinCode,
                 Status = p.Status ? "上架" : "下架",
+                p.PromoType, p.PromoPrice, p.PromoRate, p.PromoEnabled, p.PromoStartAt, p.PromoEndAt,
             })
             .Take(1).ToListAsync();
         if (row.Count == 0) return ApiResult<object?>.Fail("商品不存在");
-        return ApiResult<object?>.Ok(row[0]);
+
+        // 促销的生效判定与折算在内存里做（EF 翻译不了 C# 静态方法）；返回匿名对象以保持字段名契约
+        var r = row[0];
+        var now = DateTime.Now;
+        return ApiResult<object?>.Ok(new
+        {
+            r.Id, r.Barcode, r.Name, r.CategoryId, r.CategoryName,
+            r.Unit, r.Spec, r.SalePrice, r.CostPrice,
+            r.StockQuantity, r.SafetyStock, r.HasExpiry, r.ShelfLifeDays,
+            r.IsWeighted, r.PinyinCode, r.Status,
+            EffectivePrice = PromoHelper.EffectivePrice(r.SalePrice, r.PromoType, r.PromoPrice, r.PromoRate,
+                r.PromoEnabled, r.PromoStartAt, r.PromoEndAt, now),
+            PromoActive = PromoHelper.IsActive(r.PromoType, r.PromoEnabled, r.PromoStartAt, r.PromoEndAt, now),
+            PromoText = PromoHelper.Describe(r.PromoType, r.PromoPrice, r.PromoRate),
+            r.PromoType, r.PromoPrice, r.PromoRate, r.PromoEnabled, r.PromoStartAt, r.PromoEndAt,
+        });
     }
 
     /// <summary>获取称重商品列表（收银台快捷面板用），按分类分组返回</summary>
@@ -134,10 +156,21 @@ public partial class ProductService : IProductService
                 p.Id, p.Name, p.Barcode, p.PinyinCode,
                 p.SalePrice, p.Unit, p.StockQuantity,
                 CategoryName = _db.Categories.Where(c => c.Id == p.CategoryId).Select(c => c.Name).FirstOrDefault() ?? "未分类",
+                p.PromoType, p.PromoPrice, p.PromoRate, p.PromoEnabled, p.PromoStartAt, p.PromoEndAt,
             })
             .OrderBy(p => p.CategoryName).ThenBy(p => p.Name)
             .ToListAsync();
-        return items.Cast<object>().ToList();
+
+        var now = DateTime.Now;
+        return items.Select(p => (object)new
+        {
+            p.Id, p.Name, p.Barcode, p.PinyinCode,
+            p.SalePrice, p.Unit, p.StockQuantity, p.CategoryName,
+            EffectivePrice = PromoHelper.EffectivePrice(p.SalePrice, p.PromoType, p.PromoPrice, p.PromoRate,
+                p.PromoEnabled, p.PromoStartAt, p.PromoEndAt, now),
+            PromoActive = PromoHelper.IsActive(p.PromoType, p.PromoEnabled, p.PromoStartAt, p.PromoEndAt, now),
+            PromoText = PromoHelper.Describe(p.PromoType, p.PromoPrice, p.PromoRate),
+        }).ToList();
     }
 
     public async Task<ApiResult<object>> CreateAsync(ProductUpsertDto dto)
@@ -151,6 +184,10 @@ public partial class ProductService : IProductService
             return ApiResult<object>.Fail($"条码 {barcode} 已存在");
         if (dto.SalePrice < 0 || dto.CostPrice < 0) return ApiResult<object>.Fail("价格不能为负");
 
+        var promoType = (dto.PromoType ?? "").Trim();
+        var promoErr = ValidatePromo(promoType, dto.PromoPrice, dto.PromoRate, dto.SalePrice);
+        if (promoErr != null) return ApiResult<object>.Fail(promoErr);
+
         var p = new Product
         {
             Barcode = barcode, Name = dto.Name.Trim(), CategoryId = cat.Id,
@@ -159,6 +196,12 @@ public partial class ProductService : IProductService
             HasExpiry = dto.HasExpiry, ShelfLifeDays = dto.ShelfLifeDays,
             IsWeighted = dto.IsWeighted, PinyinCode = PinyinHelper.GetPinyinCode(dto.Name),
             Status = dto.Status, Remark = dto.Remark,
+            PromoType = promoType,
+            PromoPrice = promoType == PromoHelper.TypePrice ? dto.PromoPrice : 0m,
+            PromoRate = promoType == PromoHelper.TypeRate ? dto.PromoRate : 0m,
+            PromoEnabled = dto.PromoEnabled,
+            PromoStartAt = PromoHelper.NormalizeStart(dto.PromoStartAt),
+            PromoEndAt = PromoHelper.NormalizeEnd(dto.PromoEndAt),
         };
         _db.Products.Add(p);
         await _db.SaveChangesAsync();
@@ -288,6 +331,42 @@ public partial class ProductService : IProductService
             if (p.Remark != rk) { p.Remark = rk; changed = true; }
         }
 
+        // ---- 档案优惠：只在 JSON 中出现 promoType 时才更新（优惠方案只在商品档案里定义，收银台不提供入口）----
+        if (body.TryGetProperty("promoType", out var ptEl0))
+        {
+            var newPromoType = (ptEl0.GetString() ?? "").Trim();
+            var newPromoPrice = body.TryGetProperty("promoPrice", out var ppEl) && ppEl.ValueKind == JsonValueKind.Number
+                ? ppEl.GetDecimal() : p.PromoPrice;
+            var newPromoRate = body.TryGetProperty("promoRate", out var prEl) && prEl.ValueKind == JsonValueKind.Number
+                ? prEl.GetDecimal() : p.PromoRate;
+            // 用「本次更新后的挂牌价」校验 —— 同一个请求里可能刚改过售价
+            var promoErr = ValidatePromo(newPromoType, newPromoPrice, newPromoRate, p.SalePrice);
+            if (promoErr != null) return ApiResult.Fail(promoErr);
+
+            if (p.PromoType != newPromoType) { p.PromoType = newPromoType; changed = true; }
+            // 与当前类型无关的数值归零，避免切换优惠方式后残留旧值
+            var keepPrice = newPromoType == PromoHelper.TypePrice ? newPromoPrice : 0m;
+            var keepRate = newPromoType == PromoHelper.TypeRate ? newPromoRate : 0m;
+            if (p.PromoPrice != keepPrice) { p.PromoPrice = keepPrice; changed = true; }
+            if (p.PromoRate != keepRate) { p.PromoRate = keepRate; changed = true; }
+
+            if (body.TryGetProperty("promoEnabled", out var peEl) && (peEl.ValueKind == JsonValueKind.True || peEl.ValueKind == JsonValueKind.False))
+            {
+                var pe = peEl.GetBoolean();
+                if (p.PromoEnabled != pe) { p.PromoEnabled = pe; changed = true; }
+            }
+            if (body.TryGetProperty("promoStartAt", out var psEl))
+            {
+                var ps = PromoHelper.NormalizeStart(ReadDate(psEl));
+                if (p.PromoStartAt != ps) { p.PromoStartAt = ps; changed = true; }
+            }
+            if (body.TryGetProperty("promoEndAt", out var pendEl))
+            {
+                var pend = PromoHelper.NormalizeEnd(ReadDate(pendEl));
+                if (p.PromoEndAt != pend) { p.PromoEndAt = pend; changed = true; }
+            }
+        }
+
         // ---- 状态：兼容 bool 或 字符串 "上架"/"下架" ----
         if (body.TryGetProperty("status", out var stEl))
         {
@@ -357,6 +436,52 @@ public partial class ProductService : IProductService
     }
 
     // ---------- helpers ----------
+
+    /// <summary>
+    /// 把档案优惠写进列表字典：成交价 effectivePrice、是否生效 promoActive、方案文案 promoText，
+    /// 外加弹窗回显所需的原始字段。EF 翻译不了 C# 静态方法，故一律在内存里折算。
+    /// </summary>
+    private static void AddPromoFields(Dictionary<string, object?> dict, decimal salePrice, string? promoType,
+        decimal promoPrice, decimal promoRate, bool enabled, DateTime? startAt, DateTime? endAt, DateTime now)
+    {
+        dict["effectivePrice"] = PromoHelper.EffectivePrice(salePrice, promoType, promoPrice, promoRate, enabled, startAt, endAt, now);
+        dict["promoActive"] = PromoHelper.IsActive(promoType, enabled, startAt, endAt, now);
+        dict["promoText"] = PromoHelper.Describe(promoType, promoPrice, promoRate);
+        dict["promoType"] = promoType ?? "";
+        dict["promoPrice"] = promoPrice;
+        dict["promoRate"] = promoRate;
+        dict["promoEnabled"] = enabled;
+        dict["promoStartAt"] = startAt?.ToString("yyyy-MM-dd");
+        dict["promoEndAt"] = endAt?.ToString("yyyy-MM-dd");
+    }
+
+    /// <summary>校验档案优惠：返回错误文案，null 表示通过。促销价高于售价时直接挡下，否则成交价会算出负数让利</summary>
+    private static string? ValidatePromo(string? promoType, decimal promoPrice, decimal promoRate, decimal salePrice)
+    {
+        if (!PromoHelper.IsValidType(promoType))
+            return $"优惠方式只能是「{PromoHelper.TypePrice}」或「{PromoHelper.TypeRate}」";
+        if (promoType == PromoHelper.TypePrice)
+        {
+            if (promoPrice <= 0) return "促销价必须大于 0";
+            if (promoPrice > salePrice) return "促销价不能高于售价";
+        }
+        else if (promoType == PromoHelper.TypeRate)
+        {
+            if (promoRate < PromoHelper.MinRate || promoRate > PromoHelper.MaxRate)
+                return $"折扣需在 {PromoHelper.MinRate} ~ {PromoHelper.MaxRate} 折之间";
+        }
+        return null;
+    }
+
+    /// <summary>读日期字段：兼容 "yyyy-MM-dd" 字符串与 null / 空串</summary>
+    private static DateTime? ReadDate(JsonElement el)
+    {
+        if (el.ValueKind != JsonValueKind.String) return null;
+        var s = el.GetString();
+        if (string.IsNullOrWhiteSpace(s)) return null;
+        return DateTime.TryParse(s, out var d) ? d : null;
+    }
+
     private async Task<ProductCategory?> ResolveCategoryAsync(int categoryId, string? categoryName)
     {
         if (categoryId > 0) return await _db.Categories.FindAsync(categoryId);

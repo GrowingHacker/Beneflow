@@ -29,7 +29,7 @@
         <el-table-column label="状态" width="90"><template #default="{ row }"><el-tag :type="row.status === '已结清' ? 'success' : 'danger'" size="small">{{ row.status }}</el-tag></template></el-table-column>
         <el-table-column label="备注" min-width="120" show-overflow-tooltip><template #default="{ row }"><span :class="{ muted: !row.remark }">{{ row.remark || '—' }}</span></template></el-table-column>
         <el-table-column label="赊账时间" prop="createdAt" width="160" />
-        <el-table-column label="操作" width="100" fixed="right" align="center"><template #default="{ row }"><el-button text type="primary" title="编辑" @click="openEdit(row)"><el-icon><Edit /></el-icon></el-button><el-button v-if="row.status === '未结清'" text type="success" title="结清" @click="openSettle(row)"><el-icon><Money /></el-icon></el-button></template></el-table-column>
+        <el-table-column label="操作" width="100" fixed="right" align="center"><template #default="{ row }"><el-button text type="primary" title="编辑" @click="openEdit(row)"><el-icon><Edit /></el-icon></el-button><el-button v-if="row.status === '未结清'" text type="success" title="还款" @click="openSettle(row)"><el-icon><Money /></el-icon></el-button></template></el-table-column>
       </el-table>
     </div>
     <div class="pagination-wrap">
@@ -39,12 +39,18 @@
     </div>
   </div>
 
-  <el-dialog v-model="settleDialog" title="结清赊账" width="420px">
+  <!-- 还款弹窗：支持任意金额部分还款；还款额等于剩余时即为结清 -->
+  <el-dialog v-model="settleDialog" title="赊账还款" width="440px">
     <div style="text-align:center;margin-bottom:14px;">
-      <div class="muted">顾客：{{ current?.wechatId }}</div>
+      <div class="muted">剩余欠款</div>
       <div class="cart-total" style="font-size:26px;">{{ common.money(current?.remainingAmount) }}</div>
+      <div class="muted" style="margin-top:4px;">顾客：{{ current?.wechatId || '—' }}{{ current?.phone ? '（' + current.phone + '）' : '' }}</div>
     </div>
-    <el-form label-width="90px">
+    <el-form label-width="100px">
+      <el-form-item label="本次还款">
+        <el-input-number v-model="settleAmount" :min="0" :max="current?.remainingAmount || 0" :precision="2" controls-position="right" style="width:180px;" />
+        <el-button text type="primary" @click="settleAmount = current?.remainingAmount || 0">全额</el-button>
+      </el-form-item>
       <el-form-item label="还款方式">
         <el-radio-group v-model="payMethod">
           <el-radio-button label="微信">微信</el-radio-button>
@@ -52,10 +58,14 @@
           <el-radio-button label="支付宝">支付宝</el-radio-button>
         </el-radio-group>
       </el-form-item>
+      <el-form-item label="还款后剩余">
+        <b :class="settleRemaining > 0 ? 'danger-text' : 'success-text'">{{ common.money(settleRemaining) }}</b>
+        <span v-if="settleRemaining <= 0" class="muted" style="margin-left:8px;">本笔结清</span>
+      </el-form-item>
     </el-form>
     <template #footer>
       <el-button @click="settleDialog=false">取消</el-button>
-      <el-button type="primary" :loading="settling" @click="confirmSettle">确认结清</el-button>
+      <el-button type="primary" :loading="settling" @click="confirmSettle">{{ settleRemaining <= 0 ? '确认结清' : '确认收款' }}</el-button>
     </template>
   </el-dialog>
 
@@ -80,7 +90,7 @@
 
 <script page-setup>
 function pageSetup(deps) {
-  const { ref, onMounted } = Vue;
+  const { ref, computed, onMounted } = Vue;
   const { api, common, toast, confirm } = deps;
   const list = ref([]); const loading = ref(false);
   const keyword = ref(''); const statusFilter = ref('');
@@ -105,6 +115,12 @@ function pageSetup(deps) {
   function search() { page.value = 1; load(); }
 
   const settleDialog = ref(false); const current = ref(null); const payMethod = ref('微信'); const settling = ref(false);
+  const settleAmount = ref(0);
+  // 还款后剩余：后端以「剩余 − 本次还款」为准，这里只做展示与按钮文案
+  const settleRemaining = computed(() => {
+    const left = Number(current.value?.remainingAmount || 0) - Number(settleAmount.value || 0);
+    return left > 0 ? Math.round(left * 100) / 100 : 0;
+  });
 
   const editDialog = ref(false); const editRow = ref(null); const editSaving = ref(false);
   const editForm = ref({ phone: '', remark: '' });
@@ -121,11 +137,30 @@ function pageSetup(deps) {
     } catch(e){}
     finally { editSaving.value = false; }
   }
-  function openSettle(row) { current.value = row; payMethod.value = '微信'; settleDialog.value = true; }
+  function openSettle(row) {
+    current.value = row;
+    payMethod.value = '微信';
+    settleAmount.value = Number(row.remainingAmount || 0);   // 默认带出剩余额，一键即结清
+    settleDialog.value = true;
+  }
   async function confirmSettle() {
-    try { await confirm('确认结清此笔赊账？'); } catch(e){ return; }
+    const remaining = Number(current.value?.remainingAmount || 0);
+    const amount = Math.round(Number(settleAmount.value || 0) * 100) / 100;
+    if (!(amount > 0)) { toast('请输入还款金额', 'warning'); return; }
+    if (amount > remaining) { toast('还款金额不能超过剩余欠款 ' + common.money(remaining), 'warning'); return; }
+
+    const isFullSettle = amount >= remaining;
+    const tip = isFullSettle
+      ? '确认结清此笔赊账？'
+      : '确认收款 ' + common.money(amount) + '？还款后剩余 ' + common.money(remaining - amount);
+    try { await confirm(tip); } catch(e){ return; }
+
     settling.value = true;
-    try { await api.post('/credits/' + current.value.id + '/settle', { payMethod: payMethod.value }); toast('已结清','success'); settleDialog.value = false; load(); } catch(e){}
+    try {
+      await api.post('/credits/' + current.value.id + '/settle', { payAmount: amount, payMethod: payMethod.value });
+      toast(isFullSettle ? '已结清' : '已收款 ' + common.money(amount), 'success');
+      settleDialog.value = false; load();
+    } catch(e){}
     finally { settling.value = false; }
   }
   async function exportList() {
@@ -147,7 +182,7 @@ function pageSetup(deps) {
   onMounted(load);
   return { list, loading, keyword, statusFilter, dateFrom, dateTo, page, pageSize, total, stats,
     load, search,
-    settleDialog, current, payMethod, settling, openSettle, confirmSettle,
+    settleDialog, current, payMethod, settling, settleAmount, settleRemaining, openSettle, confirmSettle,
     editDialog, editRow, editSaving, editForm, openEdit, confirmEdit,
     exportList, exportExcel, common, toast };
 }

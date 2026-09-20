@@ -1,4 +1,4 @@
-using Beneflow.Api.Models.Entities;
+﻿using Beneflow.Api.Models.Entities;
 using Beneflow.Api.Utils;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
@@ -273,7 +273,11 @@ public static class DbSeeder
             var so = new SaleOrder
             {
                 OrderNo = orderNo, TotalAmount = total, DiscountAmount = s.Discount,
-                PayAmount = payAmount, PayMethod = s.Pay,
+                RoundOffAmount = 0,
+                PayAmount = payAmount,
+                // 实收：赊账单开单时钱没到手记 0（已结清的在下面回写），其余收款方式即应收净额
+                ReceivedAmount = s.Credit ? 0 : payAmount,
+                PayMethod = s.Pay,
                 CashAmount = s.Pay == "现金" ? s.CashGot : 0,
                 ChangeAmount = s.Pay == "现金" ? s.CashGot - payAmount : 0,
                 IsCredit = s.Credit, WechatId = s.Wx, CreatedBy = s.By.Id, CreatedAt = s.At,
@@ -286,7 +290,8 @@ public static class DbSeeder
                 db.SaleOrderDetails.Add(new SaleOrderDetail
                 {
                     OrderId = so.Id, ProductId = line.P.Id, ProductName = line.P.Name, Barcode = line.P.Barcode,
-                    Quantity = line.Qty, UnitPrice = line.P.SalePrice, CostPrice = line.P.CostPrice,
+                    Quantity = line.Qty, UnitPrice = line.P.SalePrice, OriginalPrice = line.P.SalePrice,
+                    CostPrice = line.P.CostPrice,
                     SubTotal = Math.Round(line.Qty * line.P.SalePrice, 2),
                 });
                 LogStock(line.P, -line.Qty, "销售出库", orderNo, s.By.Id, s.At);
@@ -295,6 +300,8 @@ public static class DbSeeder
             if (s.Credit && s.Wx != null)
             {
                 var settled = i == 0; // 第一条赊账演示为已结清
+                // 已结清 = 钱已经收回来了，实收要回写到原销售单（与还款口径一致）
+                if (settled) so.ReceivedAmount = payAmount;
                 var cs = new CreditSale
                 {
                     SaleOrderId = so.Id, WechatId = s.Wx, CreditAmount = payAmount,

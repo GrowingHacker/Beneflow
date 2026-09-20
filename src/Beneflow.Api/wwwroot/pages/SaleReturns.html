@@ -8,7 +8,9 @@
     <div v-else>
       <el-descriptions :column="2" border style="margin-bottom:14px;">
         <el-descriptions-item label="单号">{{ order.orderNo }}</el-descriptions-item>
-        <el-descriptions-item label="原金额">{{ common.money(order.totalAmount) }}</el-descriptions-item>
+        <el-descriptions-item label="原价合计">
+          <span :title="'未优惠前的挂牌价合计（退款按成交价计，故退款额可能低于此数）'">{{ common.money(order.totalAmount) }}</span>
+        </el-descriptions-item>
         <el-descriptions-item label="收款方式">{{ order.payMethod }}</el-descriptions-item>
         <el-descriptions-item label="时间">{{ order.createdAt }}</el-descriptions-item>
       </el-descriptions>

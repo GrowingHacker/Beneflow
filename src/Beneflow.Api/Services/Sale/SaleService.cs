@@ -1,6 +1,7 @@
-using Beneflow.Api.Data;
+﻿using Beneflow.Api.Data;
 using Beneflow.Api.Models;
 using Beneflow.Api.Models.Entities;
+using Beneflow.Api.Utils;
 using Microsoft.EntityFrameworkCore;
 
 namespace Beneflow.Api.Services;
@@ -35,6 +36,25 @@ public partial class SaleService : ISaleService
             q = q.Where(x => x.o.PayMethod == payMethod);
 
         var total = await q.CountAsync();
+
+        // 合计口径（行业惯例）：与列表同过滤条件，但剔除已作废单据——
+        // 作废单在单据列表里仍可查到，却不参与任何金额统计；否则合计会虚高。
+        // 实收合计口径：只算真正到手的钱。赊账单的实收 = 累计已还款额（还款时回写到原单），
+        // 未还部分不存在单里，自然不计入；作废单整单剔除。
+        // 注意这是「订单口径」——还款当天更新的是原单的实收，因此该笔钱记在原单日期，不记还款日。
+        var sum = await q.Where(x => !x.o.IsVoided)
+            .GroupBy(x => 1)
+            .Select(g => new
+            {
+                Orders = g.Count(),
+                TotalAmount = g.Sum(x => x.o.TotalAmount),
+                DiscountAmount = g.Sum(x => x.o.DiscountAmount),
+                RoundOffAmount = g.Sum(x => x.o.RoundOffAmount),
+                PayAmount = g.Sum(x => x.o.PayAmount),
+                ReceivedAmount = g.Sum(x => x.o.ReceivedAmount),
+                ChangeAmount = g.Sum(x => x.o.ChangeAmount),
+            }).FirstOrDefaultAsync();
+
         pageSize = pageSize <= 0 ? 20 : Math.Min(pageSize, 200);
         page = Math.Max(1, page);
         var rows = await q.OrderByDescending(x => x.o.Id)
@@ -62,9 +82,15 @@ public partial class SaleService : ISaleService
             return (object)new
             {
                 id = r.o.Id, orderNo = r.o.OrderNo,
-                totalAmount = r.o.TotalAmount, discountAmount = r.o.DiscountAmount,
-                payAmount = r.o.PayAmount, payMethod = r.o.PayMethod,
-                cashAmount = r.o.CashAmount, changeAmount = r.o.ChangeAmount,
+                totalAmount = r.o.TotalAmount,          // 商品总额（成交合计）
+                discountAmount = r.o.DiscountAmount,    // 整单优惠金额
+                discountRate = r.o.DiscountRate,        // 折扣率（折），按金额录入时为 null
+                roundOffAmount = r.o.RoundOffAmount,    // 抹零金额
+                payAmount = r.o.PayAmount,              // 应收金额
+                receivedAmount = r.o.ReceivedAmount,    // 实收金额
+                payMethod = r.o.PayMethod,
+                cashAmount = r.o.CashAmount,            // 收款额（仅现金单）
+                changeAmount = r.o.ChangeAmount,        // 找零（仅现金单）
                 status = StatusText(r.o.IsVoided, agg?.Qty ?? 0, agg?.Ret ?? 0),
                 isCredit = r.o.IsCredit,
                 creditSettled = settled,
@@ -73,7 +99,24 @@ public partial class SaleService : ISaleService
                 createdByName = r.UserName,
             };
         }).ToList();
-        return new PagedResult<object> { List = list, Total = total, Page = page, PageSize = pageSize };
+        return new PagedResult<object>
+        {
+            List = list,
+            Total = total,
+            Page = page,
+            PageSize = pageSize,
+            Summary = new
+            {
+                orders = sum?.Orders ?? 0,
+                totalAmount = Math.Round(sum?.TotalAmount ?? 0, 2),
+                discountAmount = Math.Round(sum?.DiscountAmount ?? 0, 2),
+                roundOffAmount = Math.Round(sum?.RoundOffAmount ?? 0, 2),
+                payAmount = Math.Round(sum?.PayAmount ?? 0, 2),
+                receivedAmount = Math.Round(sum?.ReceivedAmount ?? 0, 2),
+                changeAmount = Math.Round(sum?.ChangeAmount ?? 0, 2),
+                // 折扣率不进合计：折率是「率」不可加总（8 折 + 9 折没有意义），报表看优惠金额合计
+            },
+        };
     }
 
     public async Task<ApiResult<object>> GetDetailAsync(int id)
@@ -99,6 +142,7 @@ public partial class SaleService : ISaleService
             {
                 d.Id, barcode = d.Barcode, name = d.ProductName,
                 qty = d.Quantity, unitPrice = d.UnitPrice,
+                originalPrice = d.OriginalPrice,   // 挂牌价快照：让利 = (挂牌价 − 成交价) × 数量，按行可见
                 returnedQty = d.ReturnedQuantity, subTotal = d.SubTotal,
             }).ToListAsync();
         bool? settled = null;
@@ -111,7 +155,10 @@ public partial class SaleService : ISaleService
         {
             id = o.Id, orderNo = o.OrderNo,
             totalAmount = o.TotalAmount, discountAmount = o.DiscountAmount,
-            payAmount = o.PayAmount, payMethod = o.PayMethod,
+            discountRate = o.DiscountRate,
+            roundOffAmount = o.RoundOffAmount,
+            payAmount = o.PayAmount, receivedAmount = o.ReceivedAmount,
+            payMethod = o.PayMethod,
             cashAmount = o.CashAmount, changeAmount = o.ChangeAmount,
             status = StatusText(o.IsVoided, details.Sum(d => d.qty), details.Sum(d => d.returnedQty)),
             isCredit = o.IsCredit, creditSettled = settled, wechatId = o.WechatId,
@@ -193,49 +240,101 @@ public partial class SaleService : ISaleService
 
             foreach (var item in groupedItems)
             {
-                if (!products.TryGetValue(item.ProductId, out var p))
+                var p = products[item.ProductId];
+                if (p == null)
                     return ApiResult<object>.Fail($"商品 ID {item.ProductId} 不存在");
                 if (p.StockQuantity < item.Qty)
                     return ApiResult<object>.Fail($"商品「{p.Name}」库存不足（当前 {p.StockQuantity}）");
             }
 
-            // ===== 后端重算所有金额（前端金额仅作展示参考，后端以数据库售价为准） =====
-            // 1. 计算商品明细：单价取数据库售价（确保不会被前端篡改价格）
-            var detailList = new List<(Product p, decimal qty, decimal unitPrice, decimal subTotal)>();
-            var calcTotalAmount = 0m;
+            // ===== 后端重算所有金额（前端金额仅作展示参考） =====
+            // 1. 计算商品明细：成交单价 = 挂牌价经「档案优惠」折算后的价（前端传的 unitPrice 一律不采信）
+            //    优惠方案只在商品档案里定义，收银台只负责执行，因此定价的唯一依据就是数据库 + 档案
+            var now = DateTime.Now;
+            var detailList = new List<(Product p, decimal qty, decimal unitPrice, decimal originalPrice, decimal subTotal)>();
+            // 两个合计口径（小票惯例）：商品总额按「未优惠前」的挂牌价算，成交合计才是真正要收的钱，
+            // 两者之差＝档案促销让利，落到单据的「优惠」上，让利因此在单据上可见、可统计。
+            var listAmount = 0m;   // 原价合计 = Σ(挂牌价 × 数量)
+            var dealAmount = 0m;   // 成交合计 = Σ(成交价 × 数量)
             foreach (var item in groupedItems)
             {
                 var p = products[item.ProductId];
-                var unitPrice = p.SalePrice;   // 以数据库售价为准
+                var unitPrice = PromoHelper.EffectivePrice(p.SalePrice, p.PromoType, p.PromoPrice, p.PromoRate,
+                    p.PromoEnabled, p.PromoStartAt, p.PromoEndAt, now);
                 var subTotal = Math.Round(item.Qty * unitPrice, 2);
-                detailList.Add((p, item.Qty, unitPrice, subTotal));
-                calcTotalAmount += subTotal;
+                detailList.Add((p, item.Qty, unitPrice, p.SalePrice, subTotal));
+                listAmount += Math.Round(item.Qty * p.SalePrice, 2);
+                dealAmount += subTotal;
             }
-            calcTotalAmount = Math.Round(calcTotalAmount, 2);
+            listAmount = Math.Round(listAmount, 2);
+            dealAmount = Math.Round(dealAmount, 2);
+            // 促销让利 = 原价合计 − 成交合计（PromoHelper 已保证促销价不高于挂牌价，故不会为负）
+            var promoSaving = Math.Round(listAmount - dealAmount, 2);
+            if (promoSaving < 0) promoSaving = 0;
 
-            // 2. 优惠金额：取前端传入值，但限制在合理范围（0 ~ 总金额）
-            var discountAmount = Math.Round(dto.DiscountAmount, 2);
-            if (discountAmount < 0) discountAmount = 0;
-            if (discountAmount > calcTotalAmount) discountAmount = calcTotalAmount;
+            // 2. 整单优惠：两种行业录入方式（按折率 / 按金额），落库以金额为准。
+            //    折率作用在「成交合计」上（档案促销已经打过折了，整单折是在折后价上再让），
+            //    所以这里的上限是 dealAmount 而不是商品总额。
+            //    ① 按折率：先四舍五入折后金额，再减法反算优惠额——顺序不能反。
+            //       正算 round(总额 ×(1−折率)) 与反算会差 1 分：整数折与 x.4/x.8 折会让乘积正好落到
+            //       「半分」中点上，而 Math.Round 默认银行家舍入在两条路径上会落到不同方向
+            //       （实测 总额 1.00~999.99 区间：5 折有 50%、1/3/7/9 折各有 10% 的金额差 1 分）。
+            //       减法反算能保证「总额 − 优惠 = 折后 = 应收基数」恒成立，列表合计与导出对得上。
+            //    ② 按金额：直接取前端传入值。
+            //    两者都传时以折率为准——折率可独立重算校验，金额无法校验。
+            var discountRate = dto.DiscountRate.HasValue ? Math.Round(dto.DiscountRate.Value, 2) : (decimal?)null;
+            decimal orderDiscount;
+            if (discountRate.HasValue)
+            {
+                if (discountRate.Value < 0.1m || discountRate.Value > 10m)
+                    return ApiResult<object>.Fail("折扣需在 0.1 ~ 10 折之间");
+                var afterByRate = Math.Round(dealAmount * discountRate.Value / 10m, 2);
+                orderDiscount = Math.Round(dealAmount - afterByRate, 2);
+            }
+            else
+            {
+                orderDiscount = Math.Round(dto.DiscountAmount, 2);
+            }
+            if (orderDiscount < 0) orderDiscount = 0;
+            if (orderDiscount > dealAmount) orderDiscount = dealAmount;
 
-            // 3. 实付金额 = 总金额 - 优惠金额
-            var payAmount = Math.Round(calcTotalAmount - discountAmount, 2);
+            // 3. 优惠金额 = 档案促销让利 + 整单优惠（单据上「优惠」这一行的数）
+            var discountAmount = Math.Round(promoSaving + orderDiscount, 2);
+
+            // 4. 折后金额 = 商品总额 − 优惠金额 = 成交合计 − 整单优惠
+            var afterDiscount = Math.Round(listAmount - discountAmount, 2);
+            if (afterDiscount < 0) afterDiscount = 0;
+
+            // 5. 抹零金额：行业惯例只对现金抹零，且不超过折后金额
+            var isCash = dto.PayMethod == "现金";
+            var roundOffAmount = isCash ? Math.Round(dto.RoundOffAmount, 2) : 0m;
+            if (roundOffAmount < 0) roundOffAmount = 0;
+            if (roundOffAmount > afterDiscount) roundOffAmount = afterDiscount;
+
+            // 6. 应收金额 = 折后金额 − 抹零金额（顾客应付）
+            var payAmount = Math.Round(afterDiscount - roundOffAmount, 2);
             if (payAmount < 0) payAmount = 0;
 
-            // 4. 现金实收和找零（仅现金支付方式有效）
-            var isCash = dto.PayMethod == "现金";
-            var cashAmount = isCash ? Math.Round(dto.CashAmount, 2) : payAmount;
+            // 7. 收款额与找零：收款额仅现金单有意义（顾客递出的钱），非现金严格记 0
+            var cashAmount = isCash ? Math.Round(dto.CashAmount, 2) : 0m;
             if (isCash && cashAmount < payAmount)
-                return ApiResult<object>.Fail($"实收金额不足（应收 ¥{payAmount}）");
-            var changeAmount = isCash ? Math.Round(cashAmount - payAmount, 2) : 0;
+                return ApiResult<object>.Fail($"收款金额不足（应收 ¥{payAmount}）");
+            var changeAmount = isCash ? Math.Round(cashAmount - payAmount, 2) : 0m;
             if (changeAmount < 0) changeAmount = 0;
+
+            // 8. 实收金额 = 实际收到的净额：现金/微信/支付宝即应收；赊账为挂账，开单时实收 0
+            //    （后续每笔还款累加到该单实收上，见 SaleService.Credit.SettleAsync）
+            var receivedAmount = dto.IsCredit ? 0m : payAmount;
 
             var so = new SaleOrder
             {
                 OrderNo = orderNo,
-                TotalAmount = calcTotalAmount,
+                TotalAmount = listAmount,   // 商品总额＝原价合计（未优惠前）
                 DiscountAmount = discountAmount,
+                DiscountRate = discountRate,
+                RoundOffAmount = roundOffAmount,
                 PayAmount = payAmount,
+                ReceivedAmount = receivedAmount,
                 PayMethod = dto.PayMethod,
                 CashAmount = cashAmount,
                 ChangeAmount = changeAmount,
@@ -247,7 +346,7 @@ public partial class SaleService : ISaleService
             _db.SaleOrders.Add(so);
             await _db.SaveChangesAsync();
 
-            foreach (var (p, qty, unitPrice, subTotal) in detailList)
+            foreach (var (p, qty, unitPrice, originalPrice, subTotal) in detailList)
             {
                 var before = p.StockQuantity;
                 p.StockQuantity -= qty;
@@ -260,6 +359,7 @@ public partial class SaleService : ISaleService
                     Barcode = p.Barcode,
                     Quantity = qty,
                     UnitPrice = unitPrice,
+                    OriginalPrice = originalPrice,   // 挂牌价快照：档案优惠日后再改，历史单据靠它才能解释当时让了多少
                     CostPrice = p.CostPrice,   // 销售时成本快照，毛利核算依据
                     SubTotal = subTotal,
                 });
@@ -288,7 +388,10 @@ public partial class SaleService : ISaleService
             _db.OperationLogs.Add(new OperationLog
             {
                 UserId = _me.Id, UserName = _me.Username, IpAddress = _me.ClientIp, Module = "销售管理",
-                Action = "收银结算", Target = $"{orderNo} 实收 ¥{so.PayAmount} ({so.PayMethod})",
+                Action = "收银结算",
+                // 按折率录入的单独记一笔折数，便于事后区分「按折扣让利」与「手工抹了个数」
+                Target = $"{orderNo} 应收 ¥{so.PayAmount}，实收 ¥{so.ReceivedAmount}（{so.PayMethod}）"
+                         + (discountRate.HasValue ? $"，折扣 {discountRate.Value:0.##} 折" : ""),
             });
             await _db.SaveChangesAsync();
             await tx.CommitAsync();
@@ -380,7 +483,7 @@ public partial class SaleService : ISaleService
                 UserId = _me.Id, UserName = _me.Username, IpAddress = _me.ClientIp,
                 Module = "销售管理",
                 Action = "作废订单",
-                Target = $"{o.OrderNo} 实收 ¥{o.PayAmount} ({o.PayMethod})，回补库存 {details.Sum(d => d.Quantity)} 件",
+                Target = $"{o.OrderNo} 应收 ¥{o.PayAmount}，实收 ¥{o.ReceivedAmount}（{o.PayMethod}），回补库存 {details.Sum(d => d.Quantity)} 件",
             });
 
             await _db.SaveChangesAsync();

@@ -9,7 +9,30 @@ public class ReportService : IReportService
     private readonly AppDbContext _db;
     public ReportService(AppDbContext db) => _db = db;
 
-    // 毛利口径：明细小计 − 明细数量×成本快照 − 订单优惠
+    // 口径约定（零售行业惯例）：
+    //   销售额 = 有效单据（IsVoided=false）应收合计 − 同期退货退款额
+    //   实收金额 = 有效单据实收合计（赊账挂账部分天然为 0，回收走赊账核销）
+    //   毛利 = Σ(明细数量×挂牌价快照 − 明细数量×成本快照) − 优惠 − 抹零 − (退货退款 − 退回商品成本)
+    // ⚠️ 收入侧必须取「挂牌价」而不是成交小计：单据的 TotalAmount 也是原价合计，而 DiscountAmount
+    //    里含档案促销让利（原价合计 − 成交合计）。若收入侧取成交小计，让利会被减两次，毛利凭空少一块。
+    //    取挂牌价后公式等价于「Σ应收 − 成本 − 退货净额」，与改口径前数值一致（见 MEMORY 2026-09-20）。
+
+    /// <summary>
+    /// 时间段内的销售退货明细行：退货时间 / 该行退款额 / 该行退回商品成本（按原单成本快照）。
+    /// 用明细行而非退货单头，既避免重复计数，也便于按天分摊退款与成本冲回。
+    /// </summary>
+    private async Task<List<(DateTime At, decimal Refund, decimal Cost)>> LoadReturnsAsync(DateTime startInclusive, DateTime endExclusive)
+    {
+        var rows = await (
+            from rd in _db.SaleReturnDetails.AsNoTracking()
+            join r in _db.SaleReturns.AsNoTracking() on rd.ReturnId equals r.Id
+            join d in _db.SaleOrderDetails.AsNoTracking() on rd.SaleOrderDetailId equals d.Id
+            // 参数不能叫 from：查询表达式里 `x.Prop >= from` 会被当成查询子句关键字，报 CS1525
+            where r.CreatedAt >= startInclusive && endExclusive > r.CreatedAt
+            select new { r.CreatedAt, rd.SubTotal, Cost = rd.Qty * d.CostPrice }
+        ).ToListAsync();
+        return rows.Select(x => (x.CreatedAt, x.SubTotal, x.Cost)).ToList();
+    }
 
     /// <summary>日销售报表：汇总 + 近 7 天趋势 + 当日商品 Top5</summary>
     public async Task<object> DailySalesAsync(DateTime date)
@@ -17,30 +40,42 @@ public class ReportService : IReportService
         var dayStart = date.Date;
         var dayEnd = dayStart.AddDays(1);
 
+        // 已作废单据不计入销售额/订单数/客单价/毛利
         var dayOrders = await _db.SaleOrders.AsNoTracking()
-            .Where(o => o.CreatedAt >= dayStart && o.CreatedAt < dayEnd)
+            .Where(o => !o.IsVoided && o.CreatedAt >= dayStart && o.CreatedAt < dayEnd)
             .ToListAsync();
         var dayIds = dayOrders.Select(o => o.Id).ToList();
         var dayDetails = await _db.SaleOrderDetails.AsNoTracking()
             .Where(d => dayIds.Contains(d.OrderId)).ToListAsync();
 
-        var sales = Math.Round(dayOrders.Sum(o => o.PayAmount), 2);
-        var discount = Math.Round(dayOrders.Sum(o => o.DiscountAmount), 2);
-        var profit = Math.Round(dayDetails.Sum(d => d.SubTotal - d.Quantity * d.CostPrice) - discount, 2);
+        var dayReturns = await LoadReturnsAsync(dayStart, dayEnd);
+        var refund = Math.Round(dayReturns.Sum(x => x.Refund), 2);
+        var refundCost = Math.Round(dayReturns.Sum(x => x.Cost), 2);
+
+        var sales = Math.Round(dayOrders.Sum(o => o.PayAmount) - refund, 2);
+        var received = Math.Round(dayOrders.Sum(o => o.ReceivedAmount), 2);
+        var discount = Math.Round(dayOrders.Sum(o => o.DiscountAmount + o.RoundOffAmount), 2);
+        // 收入侧取挂牌价快照：DiscountAmount 含档案促销让利，这里若取成交小计会把让利减两次
+        var profit = Math.Round(dayDetails.Sum(d => d.Quantity * d.OriginalPrice - d.Quantity * d.CostPrice)
+                                - discount - (refund - refundCost), 2);
 
         // 近 7 天趋势
         var trendStart = dayStart.AddDays(-6);
         var trendOrders = await _db.SaleOrders.AsNoTracking()
-            .Where(o => o.CreatedAt >= trendStart && o.CreatedAt < dayEnd)
-            .Select(o => new { o.CreatedAt, o.PayAmount }).ToListAsync();
+            .Where(o => !o.IsVoided && o.CreatedAt >= trendStart && o.CreatedAt < dayEnd)
+            .Select(o => new { o.CreatedAt, o.PayAmount, o.ReceivedAmount }).ToListAsync();
+        var trendReturns = await LoadReturnsAsync(trendStart, dayEnd);
         var trend = Enumerable.Range(0, 7).Select(i =>
         {
             var s = trendStart.AddDays(i);
             var e = s.AddDays(1);
+            var gross = trendOrders.Where(o => o.CreatedAt >= s && o.CreatedAt < e).Sum(o => o.PayAmount);
+            var back = trendReturns.Where(r => r.At >= s && r.At < e).Sum(r => r.Refund);
             return new
             {
                 date = s.ToString("MM-dd"),
-                sales = Math.Round(trendOrders.Where(o => o.CreatedAt >= s && o.CreatedAt < e).Sum(o => o.PayAmount), 2),
+                sales = Math.Round(gross - back, 2),
+                received = Math.Round(trendOrders.Where(o => o.CreatedAt >= s && o.CreatedAt < e).Sum(o => o.ReceivedAmount), 2),
             };
         });
 
@@ -59,8 +94,10 @@ public class ReportService : IReportService
             summary = new
             {
                 sales,
+                received,
                 orders = dayOrders.Count,
                 avg = dayOrders.Count == 0 ? 0 : Math.Round(sales / dayOrders.Count, 2),
+                refund,
                 profit,
             },
             trend,
@@ -83,30 +120,51 @@ public class ReportService : IReportService
     {
         var start = new DateTime(year, month, 1);
         var end = start.AddMonths(1);
+        // 已作废单据不计入销售额/订单数/毛利
         var orders = await _db.SaleOrders.AsNoTracking()
-            .Where(o => o.CreatedAt >= start && o.CreatedAt < end)
-            .Select(o => new { o.CreatedAt, o.PayAmount, o.DiscountAmount })
+            .Where(o => !o.IsVoided && o.CreatedAt >= start && o.CreatedAt < end)
+            .Select(o => new { o.CreatedAt, o.PayAmount, o.ReceivedAmount, o.DiscountAmount, o.RoundOffAmount })
             .ToListAsync();
         var ids = await _db.SaleOrders.AsNoTracking()
-            .Where(o => o.CreatedAt >= start && o.CreatedAt < end).Select(o => o.Id).ToListAsync();
+            .Where(o => !o.IsVoided && o.CreatedAt >= start && o.CreatedAt < end).Select(o => o.Id).ToListAsync();
+        // 原价合计与成本合计：毛利 = (原价 − 成本) − 优惠 − 抹零 − 退货净额
+        var listAmount = await _db.SaleOrderDetails.AsNoTracking()
+            .Where(d => ids.Contains(d.OrderId))
+            .SumAsync(d => d.Quantity * d.OriginalPrice);
         var cost = await _db.SaleOrderDetails.AsNoTracking()
             .Where(d => ids.Contains(d.OrderId))
             .SumAsync(d => d.Quantity * d.CostPrice);
+
+        var monthReturns = await LoadReturnsAsync(start, end);
+        var refund = Math.Round(monthReturns.Sum(x => x.Refund), 2);
+        var refundCost = Math.Round(monthReturns.Sum(x => x.Cost), 2);
 
         var days = Enumerable.Range(1, DateTime.DaysInMonth(year, month)).Select(day =>
         {
             var s = new DateTime(year, month, day);
             var e = s.AddDays(1);
-            var sum = orders.Where(o => o.CreatedAt >= s && o.CreatedAt < e).Sum(o => o.PayAmount);
-            return new { date = $"{month:D2}-{day:D2}", sales = Math.Round(sum, 2) };
+            var gross = orders.Where(o => o.CreatedAt >= s && o.CreatedAt < e).Sum(o => o.PayAmount);
+            var back = monthReturns.Where(r => r.At >= s && r.At < e).Sum(r => r.Refund);
+            return new
+            {
+                date = $"{month:D2}-{day:D2}",
+                sales = Math.Round(gross - back, 2),
+                received = Math.Round(orders.Where(o => o.CreatedAt >= s && o.CreatedAt < e).Sum(o => o.ReceivedAmount), 2),
+            };
         }).Where(d => d.sales > 0 || true);
 
-        var totalSales = Math.Round(orders.Sum(o => o.PayAmount), 2);
+        var totalSales = Math.Round(orders.Sum(o => o.PayAmount) - refund, 2);
         return new
         {
             total = totalSales,
+            received = Math.Round(orders.Sum(o => o.ReceivedAmount), 2),
+            refund,
             orders = orders.Count,
-            profit = Math.Round(totalSales - (decimal)cost - orders.Sum(o => o.DiscountAmount), 2),
+            // 收入侧取原价合计：totalSales 已是「原价 − 优惠 − 抹零 − 退货」后的数，
+            // 再减一次优惠/抹零会重复扣（原写法就是这个错，现金单的抹零被减了两遍）
+            profit = Math.Round((decimal)listAmount - (decimal)cost
+                                - orders.Sum(o => o.DiscountAmount + o.RoundOffAmount)
+                                - (refund - refundCost), 2),
             days,
         };
     }
@@ -115,8 +173,9 @@ public class ReportService : IReportService
     public async Task<object> ProfitAnalysisAsync(DateTime from, DateTime to)
     {
         var to2 = to.Date.AddDays(1);
+        // 已作废单据不计入销售额/成本/毛利
         var orders = await _db.SaleOrders.AsNoTracking()
-            .Where(o => o.CreatedAt >= from.Date && o.CreatedAt < to2)
+            .Where(o => !o.IsVoided && o.CreatedAt >= from.Date && o.CreatedAt < to2)
             .ToListAsync();
         var ids = orders.Select(o => o.Id).ToList();
         var details = await (
@@ -127,10 +186,17 @@ public class ReportService : IReportService
             select new { d, Category = c.Name }
         ).ToListAsync();
 
-        var sales = Math.Round(orders.Sum(o => o.PayAmount), 2);
+        var periodReturns = await LoadReturnsAsync(from.Date, to2);
+        var refund = Math.Round(periodReturns.Sum(x => x.Refund), 2);
+        var refundCost = Math.Round(periodReturns.Sum(x => x.Cost), 2);
+
+        var sales = Math.Round(orders.Sum(o => o.PayAmount) - refund, 2);
+        var received = Math.Round(orders.Sum(o => o.ReceivedAmount), 2);
         var costRounded = Math.Round(details.Sum(x => x.d.Quantity * x.d.CostPrice), 2);
-        var discount = Math.Round(orders.Sum(o => o.DiscountAmount), 2);
-        var profit = Math.Round(sales - costRounded - discount, 2);
+        // 原价合计：与成本同取自明细，保证「收入 − 成本 − 优惠 − 抹零 − 退货净额」不重复扣
+        var listRounded = Math.Round(details.Sum(x => x.d.Quantity * x.d.OriginalPrice), 2);
+        var discount = Math.Round(orders.Sum(o => o.DiscountAmount + o.RoundOffAmount), 2);
+        var profit = Math.Round(listRounded - costRounded - discount - (refund - refundCost), 2);
 
         var byCategory = details.GroupBy(x => x.Category).Select(g => new
         {
@@ -141,7 +207,7 @@ public class ReportService : IReportService
 
         return new
         {
-            sales, cost = costRounded, profit,
+            sales, received, refund, cost = costRounded, profit,
             profitRate = sales == 0 ? 0 : Math.Round(profit / sales, 4),
             byCategory,
         };
@@ -241,16 +307,26 @@ public class ReportService : IReportService
         var todayIds = todayOrders.Select(o => o.Id).ToList();
         var todayDetails = await _db.SaleOrderDetails.AsNoTracking()
             .Where(d => todayIds.Contains(d.OrderId)).ToListAsync();
-        var todaySales = Math.Round(todayOrders.Sum(o => o.PayAmount), 2);
-        var todayDiscount = Math.Round(todayOrders.Sum(o => o.DiscountAmount), 2);
+        var todayReturns = await LoadReturnsAsync(today, tomorrow);
+        var todayRefund = Math.Round(todayReturns.Sum(x => x.Refund), 2);
+        var todayRefundCost = Math.Round(todayReturns.Sum(x => x.Cost), 2);
+        var todaySales = Math.Round(todayOrders.Sum(o => o.PayAmount) - todayRefund, 2);
+        var todayReceived = Math.Round(todayOrders.Sum(o => o.ReceivedAmount), 2);
+        var todayDiscount = Math.Round(todayOrders.Sum(o => o.DiscountAmount + o.RoundOffAmount), 2);
 
         // 本月
         var monthOrders = await _db.SaleOrders.AsNoTracking()
             .Where(o => !o.IsVoided && o.CreatedAt >= monthStart && o.CreatedAt < tomorrow)
-            .Select(o => new { o.Id, o.PayAmount, o.DiscountAmount }).ToListAsync();
+            .Select(o => new { o.Id, o.PayAmount, o.ReceivedAmount, o.DiscountAmount, o.RoundOffAmount }).ToListAsync();
         var monthIds = monthOrders.Select(o => o.Id).ToList();
         var monthCost = await _db.SaleOrderDetails.AsNoTracking()
             .Where(d => monthIds.Contains(d.OrderId)).SumAsync(d => d.Quantity * d.CostPrice);
+        var monthList = await _db.SaleOrderDetails.AsNoTracking()
+            .Where(d => monthIds.Contains(d.OrderId)).SumAsync(d => d.Quantity * d.OriginalPrice);
+        var monthReturns = await LoadReturnsAsync(monthStart, tomorrow);
+        var monthRefund = Math.Round(monthReturns.Sum(x => x.Refund), 2);
+        var monthRefundCost = Math.Round(monthReturns.Sum(x => x.Cost), 2);
+        var monthSales = Math.Round(monthOrders.Sum(o => o.PayAmount) - monthRefund, 2);
 
         // 库存预警卡片
         var shortage = await _db.Products.CountAsync(p => !p.IsDeleted && p.StockQuantity <= 0);
@@ -267,6 +343,7 @@ public class ReportService : IReportService
         var trendOrders = await _db.SaleOrders.AsNoTracking()
             .Where(o => !o.IsVoided && o.CreatedAt >= trendStart && o.CreatedAt < tomorrow)
             .Select(o => new { o.CreatedAt, o.PayAmount }).ToListAsync();
+        var trendReturns = await LoadReturnsAsync(trendStart, tomorrow);
         var trend = Enumerable.Range(0, 7).Select(i =>
         {
             var s = trendStart.AddDays(i);
@@ -274,7 +351,8 @@ public class ReportService : IReportService
             return new
             {
                 date = s.ToString("MM-dd"),
-                sales = Math.Round(trendOrders.Where(o => o.CreatedAt >= s && o.CreatedAt < e).Sum(o => o.PayAmount), 2),
+                sales = Math.Round(trendOrders.Where(o => o.CreatedAt >= s && o.CreatedAt < e).Sum(o => o.PayAmount)
+                                - trendReturns.Where(r => r.At >= s && r.At < e).Sum(r => r.Refund), 2),
             };
         });
 
@@ -293,15 +371,23 @@ public class ReportService : IReportService
             today = new
             {
                 sales = todaySales,
+                received = todayReceived,
+                refund = todayRefund,
                 orders = todayOrders.Count,
                 avg = todayOrders.Count == 0 ? 0 : Math.Round(todaySales / todayOrders.Count, 2),
-                profit = Math.Round(todayDetails.Sum(d => d.SubTotal - d.Quantity * d.CostPrice) - todayDiscount, 2),
+                profit = Math.Round(todayDetails.Sum(d => d.Quantity * d.OriginalPrice - d.Quantity * d.CostPrice)
+                                    - todayDiscount - (todayRefund - todayRefundCost), 2),
             },
             month = new
             {
-                sales = Math.Round(monthOrders.Sum(o => o.PayAmount), 2),
+                sales = monthSales,
+                received = Math.Round(monthOrders.Sum(o => o.ReceivedAmount), 2),
+                refund = monthRefund,
                 orders = monthOrders.Count,
-                profit = Math.Round(monthOrders.Sum(o => o.PayAmount) - monthCost - monthOrders.Sum(o => o.DiscountAmount), 2),
+                // 收入侧取原价合计（monthSales 已扣过优惠/抹零，再减一次就重复了）
+                profit = Math.Round((decimal)monthList - (decimal)monthCost
+                                    - monthOrders.Sum(o => o.DiscountAmount + o.RoundOffAmount)
+                                    - (monthRefund - monthRefundCost), 2),
             },
             stock = new { shortage, warning, expiry = expiring + expiredCnt },
             credit = new

@@ -1,4 +1,4 @@
-using System.ComponentModel.DataAnnotations;
+﻿using System.ComponentModel.DataAnnotations;
 using Beneflow.Api.Models.Entities;
 
 namespace Beneflow.Api.Models;
@@ -64,20 +64,27 @@ public class CreateSaleDto
 {
     /// <summary>销售明细行</summary>
     public List<SaleItemDto> Items { get; set; } = new();
-    /// <summary>应收总额（优惠前）</summary>
+    /// <summary>商品总额（前端展示值，后端重算）</summary>
     public decimal TotalAmount { get; set; }
-    /// <summary>折扣金额</summary>
+    /// <summary>优惠金额（整单折扣让利）</summary>
     public decimal DiscountAmount { get; set; }
-    /// <summary>实收金额</summary>
+    /// <summary>
+    /// 折扣率（单位「折」：8.8 表示 8.8 折 = 88%）。可选，仅「按折扣」录入时传。
+    /// 有值时后端以折率重算优惠金额（折率可独立校验，金额不可），忽略 DiscountAmount；单位是「折」不是「%」。
+    /// </summary>
+    public decimal? DiscountRate { get; set; }
+    /// <summary>抹零金额（现金取整让利，非现金单必须为 0）</summary>
+    public decimal RoundOffAmount { get; set; }
+    /// <summary>应收金额（前端展示值，后端重算）</summary>
     public decimal PayAmount { get; set; }
 
     /// <summary>收款方式：现金/微信/支付宝/银行/赊账</summary>
     [StringLength(20, ErrorMessage = "收款方式长度不能超过 20 位")]
     public string PayMethod { get; set; } = "现金";
 
-    /// <summary>现金实收（用于算找零）</summary>
+    /// <summary>收款额（递钞额）：现金单顾客实际交出的钱，用于算找零；非现金传 0</summary>
     public decimal CashAmount { get; set; }
-    /// <summary>找零金额</summary>
+    /// <summary>找零金额（前端展示值，后端重算）</summary>
     public decimal ChangeAmount { get; set; }
     /// <summary>是否赊账</summary>
     public bool IsCredit { get; set; }
@@ -275,6 +282,20 @@ public class ProductUpsertDto
     public decimal SalePrice { get; set; }
     /// <summary>成本价</summary>
     public decimal CostPrice { get; set; }
+
+    /// <summary>优惠方式：""=无优惠 / "特价" / "折扣"（优惠方案只在档案里定）</summary>
+    [StringLength(10, ErrorMessage = "优惠方式长度不能超过 10 位")]
+    public string PromoType { get; set; } = "";
+    /// <summary>促销价（PromoType="特价" 时生效）</summary>
+    public decimal PromoPrice { get; set; }
+    /// <summary>促销折率（PromoType="折扣" 时生效，单位「折」：8.8 = 8.8 折）</summary>
+    public decimal PromoRate { get; set; }
+    /// <summary>优惠启用开关</summary>
+    public bool PromoEnabled { get; set; } = true;
+    /// <summary>优惠开始日期（可空 = 不限）</summary>
+    public DateTime? PromoStartAt { get; set; }
+    /// <summary>优惠结束日期（可空 = 不限，含结束日当天）</summary>
+    public DateTime? PromoEndAt { get; set; }
     /// <summary>库存数量</summary>
     public decimal StockQuantity { get; set; }
     /// <summary>安全库存（低于则预警）</summary>

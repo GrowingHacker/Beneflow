@@ -95,6 +95,27 @@ public class ReportServiceTests : TestBase
         Assert.Equal(60m, P<decimal>(summary, "profit"));
     }
 
+    /// <summary>
+    /// 档案促销让利下的毛利口径：商品总额按**原价合计**记账（优惠＝除让利合计），
+    /// 因此毛利仍是「应收 − 成本」，不会因为让利被减两次而缩水。日/月两处公式都要一致。
+    /// </summary>
+    [Fact]
+    public async Task DailySalesAsync_PromoSaving_KeepsProfitEqualToReceivableMinusCost()
+    {
+        // 2 件：挂牌价 10（原价合计 20）、成交价 8（成交合计 16）、成本 5 ⇒ 优惠 4、应收 16
+        var o = SeedSale(16m, Today.AddHours(10), discount: 4m);
+        SeedSaleDetail(o, ProductAId, 2, 8m, 5m, originalPrice: 10m);
+
+        var r = await ReportSvc.DailySalesAsync(Today);
+        var summary = P<object>(r, "summary");
+
+        Assert.Equal(16m, P<decimal>(summary, "sales"));   // 销售额取应收口径
+        Assert.Equal(6m, P<decimal>(summary, "profit"));   // 20 − 10(成本) − 4(让利) = 6；若收入侧误取成交小计会得 2
+
+        var month = await ReportSvc.MonthlySalesAsync(Today.Year, Today.Month);
+        Assert.Equal(6m, P<decimal>(month, "profit"));     // 月报与日报必须同一公式
+    }
+
     [Fact]
     public async Task DailySalesAsync_ExcludesOtherDays()
     {
@@ -149,6 +170,55 @@ public class ReportServiceTests : TestBase
         Assert.Equal("Top商品6", P<string>(top5[0], "name"));  // 销售额最高排最前
         Assert.Equal(60m, P<decimal>(top5[0], "amount"));
         Assert.Equal(20m, P<decimal>(top5[4], "amount"));      // 最低的 Top商品1 被挤出
+    }
+
+    [Fact]
+    public async Task DailySalesAsync_ExcludesVoidedOrders()
+    {
+        var ok = SeedSale(100m, Today.AddHours(9));
+        SeedSaleDetail(ok, ProductAId, 5, 20m, 8m);
+        var voided = SeedSale(999m, Today.AddHours(10), isVoided: true);
+        SeedSaleDetail(voided, ProductAId, 1, 999m, 1m);
+
+        var r = await ReportSvc.DailySalesAsync(Today);
+        var summary = P<object>(r, "summary");
+
+        // 作废单此前在日报里仍被计入销售额，必须剔除
+        Assert.Equal(100m, P<decimal>(summary, "sales"));
+        Assert.Equal(1, P<int>(summary, "orders"));
+        Assert.Equal(100m, P<decimal>(summary, "avg"));
+    }
+
+    [Fact]
+    public async Task DailySalesAsync_SubtractsReturnsFromSalesAndProfit()
+    {
+        var o = SeedSale(100m, Today.AddHours(9));
+        var detail = SeedSaleDetail(o, ProductAId, 10, 10m, 4m);      // 小计 100，成本 40
+        // 退 2 件：退款 20，退回成本冲回 8
+        SeedSaleReturn(o, detail, 2, Today.AddHours(11));
+
+        var r = await ReportSvc.DailySalesAsync(Today);
+        var summary = P<object>(r, "summary");
+
+        Assert.Equal(80m, P<decimal>(summary, "sales"));              // 100 − 20 退货
+        Assert.Equal(20m, P<decimal>(summary, "refund"));
+        Assert.Equal(100m, P<decimal>(summary, "received"));          // 实收＝当日订单收款，退款单独列示
+        Assert.Equal(48m, P<decimal>(summary, "profit"));             // (100−40) − (20−8)
+    }
+
+    [Fact]
+    public async Task DailySalesAsync_ReceivedExcludesCreditUnreceived()
+    {
+        var cash = SeedSale(30m, Today.AddHours(9), payMethod: "现金");
+        SeedSaleDetail(cash, ProductAId, 3, 10m, 4m);
+        var credit = SeedSale(50m, Today.AddHours(10), isCredit: true, payMethod: "赊账");
+        SeedSaleDetail(credit, ProductBId, 5, 10m, 4m);
+
+        var r = await ReportSvc.DailySalesAsync(Today);
+        var summary = P<object>(r, "summary");
+
+        Assert.Equal(80m, P<decimal>(summary, "sales"));              // 应收 30 + 50
+        Assert.Equal(30m, P<decimal>(summary, "received"));           // 赊账 50 挂账，未真正收到
     }
 
     // ==================== 月销售报表 ====================

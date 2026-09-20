@@ -5,6 +5,10 @@
       <div class="value">{{ common.money(summary?.today?.sales) }}</div>
     </div>
     <div class="stat-card success">
+      <div class="label">今日实收</div>
+      <div class="value">{{ common.money(summary?.today?.received) }}</div>
+    </div>
+    <div class="stat-card success">
       <div class="label">今日订单 / 客单价</div>
       <div class="value">{{ summary?.today?.orders || 0 }} 单 / {{ common.money(summary?.today?.avg) }}</div>
     </div>
@@ -15,6 +19,10 @@
     <div class="stat-card success">
       <div class="label">本月销售额</div>
       <div class="value">{{ common.money(summary?.month?.sales) }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">本月实收</div>
+      <div class="value">{{ common.money(summary?.month?.received) }}</div>
     </div>
   </div>
 

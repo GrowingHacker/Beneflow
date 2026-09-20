@@ -135,4 +135,67 @@ public class ExportServiceTests
         Assert.Contains("\"15\"", sum);
         Assert.Contains("53.50", sum);
     }
+
+    // ============ 合计剔除规则：作废单据照常输出为数据行，但不进合计 ============
+
+    /// <summary>三行报表：两行有效 + 一行已作废（金额 999 不得进合计）</summary>
+    private static ExcelReport ReportWithVoidedRow() => new()
+    {
+        SheetName = "销售单列表",
+        Title = "销售单列表",
+        Columns = new List<ExcelColumn>
+        {
+            new() { Field = "orderNo", Title = "单号",  Type = ExcelColumnType.Text,  IsLabel = true },
+            new() { Field = "amount",  Title = "应收",  Type = ExcelColumnType.Money },
+            new() { Field = "status",  Title = "状态",  Type = ExcelColumnType.Text },
+        },
+        Rows = new List<Dictionary<string, object?>>
+        {
+            new() { ["orderNo"] = "SO001", ["amount"] = 20m,  ["status"] = "已完成" },
+            new() { ["orderNo"] = "SO002", ["amount"] = 999m, ["status"] = "已作废" },
+            new() { ["orderNo"] = "SO003", ["amount"] = 30m,  ["status"] = "已完成" },
+        },
+        SummaryLabel = "合计（不含已作废）",
+        SummaryFields = new() { "amount" },
+        SummaryExcludeField = "status",
+        SummaryExcludeValues = { "已作废" },
+    };
+
+    [Fact]
+    public void BuildCsv_Summary_ExcludesRowsMatchingExcludeValues()
+    {
+        var csv = new ExcelExportService().BuildCsv(ReportWithVoidedRow());
+        var lines = csv.TrimStart('\uFEFF').TrimEnd('\r', '\n').Split("\n");
+
+        Assert.Equal(5, lines.Length);                            // 表头 + 3 数据行 + 合计行
+        // 合计 = 20 + 30，作废行的 999 不计入
+        Assert.Contains("50.00", lines[4]);
+        Assert.DoesNotContain("1049", lines[4]);
+        // 作废行本身仍照常导出，便于审计
+        Assert.Contains("999.00", lines[2]);
+    }
+
+    [Fact]
+    public void Build_Summary_ExcludesRowsMatchingExcludeValues()
+    {
+        using var ms = new MemoryStream(new ExcelExportService().Build(ReportWithVoidedRow()));
+        using var wb = new XLWorkbook(ms);
+        var ws = wb.Worksheet("销售单列表");
+
+        Assert.Equal("SO002", ws.Cell(4, 1).GetString());          // 作废行仍在数据区
+        Assert.Equal(999m, (decimal)ws.Cell(4, 2).GetDouble());
+        Assert.Equal(50m, (decimal)ws.Cell(6, 2).GetDouble());     // 合计行只累计有效行
+    }
+
+    [Fact]
+    public void BuildCsv_NoExcludeRule_SumsEveryRow()
+    {
+        var noRule = ReportWithVoidedRow();
+        noRule.SummaryExcludeField = null;
+        noRule.SummaryExcludeValues.Clear();
+
+        var csv = new ExcelExportService().BuildCsv(noRule);
+
+        Assert.Contains("1049.00", csv);                          // 未配置剔除规则时按原口径全量累加
+    }
 }

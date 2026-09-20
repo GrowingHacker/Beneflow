@@ -12,6 +12,8 @@
         </div>
         <div class="stat-row">
           <div class="stat-card"><div class="label">销售额</div><div class="value">{{ common.money(daily?.summary?.sales) }}</div></div>
+          <div class="stat-card success"><div class="label">实收金额</div><div class="value">{{ common.money(daily?.summary?.received) }}</div></div>
+          <div class="stat-card danger"><div class="label">销售退货</div><div class="value">{{ common.money(daily?.summary?.refund) }}</div></div>
           <div class="stat-card success"><div class="label">订单数</div><div class="value">{{ daily?.summary?.orders || 0 }}</div></div>
           <div class="stat-card"><div class="label">客单价</div><div class="value">{{ common.money(daily?.summary?.avg) }}</div></div>
           <div class="stat-card warn"><div class="label">毛利</div><div class="value">{{ common.money(daily?.summary?.profit) }}</div></div>
@@ -34,6 +36,8 @@
         </div>
         <div class="stat-row">
           <div class="stat-card"><div class="label">月度销售总额</div><div class="value">{{ common.money(monthly?.total) }}</div></div>
+          <div class="stat-card success"><div class="label">月度实收金额</div><div class="value">{{ common.money(monthly?.received) }}</div></div>
+          <div class="stat-card danger"><div class="label">月度退货</div><div class="value">{{ common.money(monthly?.refund) }}</div></div>
         </div>
         <div class="chart-box"><div ref="monthlyEl" style="height:320px;"></div></div>
       </div>
@@ -50,6 +54,8 @@
         </div>
         <div class="stat-row">
           <div class="stat-card"><div class="label">销售额</div><div class="value">{{ common.money(profit?.sales) }}</div></div>
+          <div class="stat-card success"><div class="label">实收金额</div><div class="value">{{ common.money(profit?.received) }}</div></div>
+          <div class="stat-card danger"><div class="label">退货</div><div class="value">{{ common.money(profit?.refund) }}</div></div>
           <div class="stat-card warn"><div class="label">成本</div><div class="value">{{ common.money(profit?.cost) }}</div></div>
           <div class="stat-card success"><div class="label">毛利</div><div class="value">{{ common.money(profit?.profit) }}</div></div>
           <div class="stat-card"><div class="label">毛利率</div><div class="value">{{ profitRate }}%</div></div>

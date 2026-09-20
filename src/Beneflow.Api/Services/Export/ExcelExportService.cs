@@ -80,7 +80,7 @@ public class ExcelExportService : IExcelExportService
             var sums = new Dictionary<string, double>();
             foreach (var f in report.SummaryFields)
                 sums[f] = 0;
-            foreach (var row in report.Rows)
+            foreach (var row in SummaryRows(report))
                 foreach (var f in report.SummaryFields)
                     if (row.TryGetValue(f, out var v) && v != null && double.TryParse(v.ToString(), out var d))
                         sums[f] += d;
@@ -119,7 +119,7 @@ public class ExcelExportService : IExcelExportService
         if (hasSummary)
         {
             foreach (var f in report.SummaryFields) summaryValues[f] = 0;
-            foreach (var row in report.Rows)
+            foreach (var row in SummaryRows(report))
                 foreach (var f in report.SummaryFields)
                     if (row.TryGetValue(f, out var v) && v != null && double.TryParse(v.ToString(), out var d))
                         summaryValues[f] += d;
@@ -148,6 +148,17 @@ public class ExcelExportService : IExcelExportService
         ws.SheetView.FreezeRows(2);
 
         return ToBytes(wb);
+    }
+
+    /// <summary>参与合计的数据行：按 SummaryExcludeField/SummaryExcludeValues 剔除（如已作废单据）</summary>
+    private static IEnumerable<Dictionary<string, object?>> SummaryRows(ExcelReport report)
+    {
+        if (string.IsNullOrEmpty(report.SummaryExcludeField) || report.SummaryExcludeValues.Count == 0)
+            return report.Rows;
+        var field = report.SummaryExcludeField;
+        return report.Rows.Where(r =>
+            !(r.TryGetValue(field, out var v) && v != null
+              && report.SummaryExcludeValues.Contains(v.ToString() ?? "")));
     }
 
     /// <summary>字符串显示宽度：CJK/全角字符按 2，其余按 1</summary>
@@ -191,7 +202,7 @@ public class ExcelExportService : IExcelExportService
         {
             var sums = new Dictionary<string, double>();
             foreach (var f in report.SummaryFields) sums[f] = 0;
-            foreach (var row in report.Rows)
+            foreach (var row in SummaryRows(report))
                 foreach (var f in report.SummaryFields)
                     if (row.TryGetValue(f, out var v) && v != null && double.TryParse(v.ToString(), out var d))
                         sums[f] += d;

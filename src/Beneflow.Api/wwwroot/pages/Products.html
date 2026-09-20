@@ -1,4 +1,4 @@
-<div>
+﻿<div>
   <div class="page-card">
     <div class="toolbar">
       <el-input v-model="keyword" placeholder="商品名称 / 条码" clearable style="width:220px;" @keyup.enter="search" />
@@ -49,6 +49,13 @@
         <el-table-column label="成本" width="80">
           <template #default="{ row }">{{ common.money(row.costPrice) }}</template>
         </el-table-column>
+        <el-table-column label="优惠方案" width="118">
+          <template #default="{ row }">
+            <el-tag v-if="row.promoText && row.promoActive" type="danger" size="small">{{ row.promoText }}</el-tag>
+            <el-tag v-else-if="row.promoText" type="info" size="small">未生效</el-tag>
+            <span v-else class="muted">—</span>
+          </template>
+        </el-table-column>
         <el-table-column label="库存" prop="stockQuantity" width="70" />
         <el-table-column label="有效期" width="110">
           <template #default="{ row }">
@@ -92,6 +99,7 @@
   <el-dialog v-model="dialog" :title="form.id ? '编辑商品' : '新增商品'" width="640px">
     <el-form :model="form" label-width="90px">
       <el-row :gutter="12">
+        <el-col :span="24"><div class="form-section-title">基本信息</div></el-col>
         <el-col :span="12"><el-form-item label="条码"><el-input v-model="form.barcode" :disabled="!!form.id" placeholder="留空自动生成店内码" /></el-form-item></el-col>
         <el-col :span="12"><el-form-item label="名称"><el-input v-model="form.name" /></el-form-item></el-col>
         <el-col :span="12"><el-form-item label="分类">
@@ -111,12 +119,44 @@
         </el-form-item></el-col>
         <el-col :span="12"><el-form-item label="售价"><el-input v-model.number="form.salePrice" type="number" /></el-form-item></el-col>
         <el-col :span="12"><el-form-item label="成本价"><el-input v-model.number="form.costPrice" type="number" /></el-form-item></el-col>
+        <!-- 优惠方案：只在商品档案里定义，收银台只执行与显示，不提供改动入口 -->
+        <el-col :span="24"><div class="form-section-title">优惠方案<span class="hint">可选 · 收银台按此自动计价</span></div></el-col>
+        <el-col :span="12"><el-form-item label="方案类型">
+          <!-- 三选一，用单选按钮组：值仍是 ''/特价/折扣，与后端约定不变。
+               不用 el-select —— 它认不出空字符串 value（会让「无优惠」显示成「请选择」）。 -->
+          <el-radio-group v-model="form.promoType">
+            <el-radio-button :label="''">无优惠</el-radio-button>
+            <el-radio-button label="特价">特价</el-radio-button>
+            <el-radio-button label="折扣">折扣</el-radio-button>
+          </el-radio-group>
+        </el-form-item></el-col>
+        <el-col :span="12" v-if="form.promoType === '特价'"><el-form-item label="促销价">
+          <el-input v-model.number="form.promoPrice" type="number" placeholder="须低于售价" />
+        </el-form-item></el-col>
+        <el-col :span="12" v-else-if="form.promoType === '折扣'"><el-form-item label="折扣">
+          <el-input v-model.number="form.promoRate" type="number" placeholder="8.8 即 88%">
+            <template #suffix><span class="unit-text">折</span></template>
+          </el-input>
+        </el-form-item></el-col>
+        <template v-if="form.promoType">
+          <el-col :span="12"><el-form-item label="开始日期">
+            <el-date-picker v-model="form.promoStartAt" type="date" value-format="YYYY-MM-DD" placeholder="留空即立即生效" style="width:100%;" />
+          </el-form-item></el-col>
+          <el-col :span="12"><el-form-item label="结束日期">
+            <el-date-picker v-model="form.promoEndAt" type="date" value-format="YYYY-MM-DD" placeholder="留空即长期有效" style="width:100%;" />
+          </el-form-item></el-col>
+          <el-col :span="12"><el-form-item label="优惠状态">
+            <el-switch v-model="form.promoEnabled" active-text="启用" inactive-text="停用" />
+          </el-form-item></el-col>
+        </template>
+
+        <el-col :span="24"><div class="form-section-title">库存与其他</div></el-col>
         <el-col :span="12"><el-form-item label="初始库存"><el-input v-model.number="form.stockQuantity" type="number" /></el-form-item></el-col>
         <el-col :span="12"><el-form-item label="安全库存"><el-input v-model.number="form.safetyStock" type="number" /></el-form-item></el-col>
         <el-col :span="12"><el-form-item label="保质期天数"><el-input v-model.number="form.shelfLifeDays" type="number" /></el-form-item></el-col>
         <el-col :span="12"><el-form-item label="称重商品">
           <el-switch v-model="form.isWeighted" active-text="是" inactive-text="否" @change="onWeightedChange" />
-          <span class="muted" style="font-size:12px;margin-left:6px;">散装称重，按斤/公斤计价</span>
+          <span class="muted form-hint-inline">按重量计价</span>
         </el-form-item></el-col>
         <el-col :span="24"><el-form-item label="备注"><el-input v-model="form.remark" type="textarea" :rows="2" /></el-form-item></el-col>
       </el-row>
@@ -235,7 +275,8 @@ function pageSetup(deps) {
   const catDict = ref({});   // 分类专属字典：{ 分类名: { units:[], specs:[] } }
 
   function emptyForm() {
-    return { barcode:'', name:'', categoryId:'', categoryName:'', unit:'个', spec:'', salePrice:0, costPrice:0, stockQuantity:0, safetyStock:0, shelfLifeDays:0, isWeighted:false, remark:'', status:'上架' };
+    return { barcode:'', name:'', categoryId:'', categoryName:'', unit:'个', spec:'', salePrice:0, costPrice:0, stockQuantity:0, safetyStock:0, shelfLifeDays:0, isWeighted:false, remark:'', status:'上架',
+      promoType:'', promoPrice:0, promoRate:0, promoEnabled:true, promoStartAt:null, promoEndAt:null };
   }
 
   function onWeightedChange(val) {
@@ -307,7 +348,9 @@ function pageSetup(deps) {
   }
   function openEdit(row) {
     suppressCatWatch = true;
-    form.value = JSON.parse(JSON.stringify(row)); dialog.value = true;
+    // 与空表单合并：保证促销字段在缺值时也有初值（日期控件不接受 undefined）
+    form.value = Object.assign(emptyForm(), JSON.parse(JSON.stringify(row)));
+    dialog.value = true;
     nextTick(function () { suppressCatWatch = false; });
   }
 
@@ -318,6 +361,14 @@ function pageSetup(deps) {
     if (!f.categoryId && !f.categoryName) { toast('请选择分类', 'warning'); return; }
     if (!f.unit) { toast('请选择单位', 'warning'); return; }
     if (f.salePrice < 0 || f.costPrice < 0) { toast('价格不能为负', 'warning'); return; }
+    // 优惠方案：前端先挡一道，后端 ValidatePromo 是权威
+    if (f.promoType === '特价') {
+      if (!(Number(f.promoPrice) > 0)) { toast('请填写大于 0 的促销价', 'warning'); return; }
+      if (Number(f.promoPrice) > Number(f.salePrice)) { toast('促销价不能高于售价', 'warning'); return; }
+    } else if (f.promoType === '折扣') {
+      const r = Number(f.promoRate);
+      if (!(r >= 0.1 && r <= 10)) { toast('折扣需在 0.1 ~ 10 折之间', 'warning'); return; }
+    }
     // 允许创建的自定义单位/规格：保存商品后回写字典——分类有专属配置→写入该分类，否则写全局
     const cname = catName.value;
     const hasCfg = !!(cname && catDict.value[cname]);

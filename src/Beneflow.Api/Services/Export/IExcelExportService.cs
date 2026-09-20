@@ -28,6 +28,13 @@ public class ExcelReport
     public string? SummaryLabel { get; set; }
     /// <summary>参与合计的数值字段名（Type=Number/Money）</summary>
     public List<string> SummaryFields { get; set; } = new();
+    /// <summary>
+    /// 合计剔除规则字段名：当某行的该字段值命中 <see cref="SummaryExcludeValues"/> 时，
+    /// 该行仍照常输出为数据行，但不参与合计（例如「已作废」单据不进合计）。
+    /// </summary>
+    public string? SummaryExcludeField { get; set; }
+    /// <summary>命中即不参与合计的字段值</summary>
+    public List<string> SummaryExcludeValues { get; set; } = new();
 }
 
 /// <summary>基于 ClosedXML 的美观 Excel 生成器，统一样式</summary>

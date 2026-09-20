@@ -1,4 +1,4 @@
-using Beneflow.Api.Models.Entities;
+﻿using Beneflow.Api.Models.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
@@ -22,6 +22,10 @@ public class ProductConfiguration : IEntityTypeConfiguration<Product>
         e.Property(x => x.SafetyStock).HasPrecision(10, 3);
         e.Property(x => x.SalePrice).HasPrecision(10, 2);
         e.Property(x => x.CostPrice).HasPrecision(10, 2);
+        // 档案优惠：类型为短枚举字符串，价格/折率分别为分位与两位小数（折率 8.80 = 8.8 折）
+        e.Property(x => x.PromoType).HasMaxLength(10);
+        e.Property(x => x.PromoPrice).HasPrecision(10, 2);
+        e.Property(x => x.PromoRate).HasPrecision(5, 2);
         e.HasOne(x => x.Category).WithMany().HasForeignKey(x => x.CategoryId)
          .OnDelete(DeleteBehavior.Restrict);
     }

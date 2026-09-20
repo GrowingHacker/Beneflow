@@ -11,7 +11,10 @@
 
 ## 功能
 
-- 收银开单 / 销售退货 / 赊账管理
+- 收银开单：金额按小票口径成链（**商品总额＝未优惠前的原价合计** → 优惠 → 抹零 → 应收 → 收款额 → 找零 → 实收）；收银台不提供任何让利入口，抵减一律来自商品档案
+- 商品优惠：方案只在商品档案里定义（特价 / 折扣 + 生效起止 + 启停开关）；收银台按档案自动计价，只在单价处显示「原价 → 成交价」
+- 销售单详情：优惠是**商品级**的，详情按商品行列出「挂牌价 → 成交价 / 让利 / 等效折率 / 已退」，订单行的「优惠」即各行让利合计，看得到每个商品让了多少
+- 销售退货 / 赊账管理：赊账按微信号挂账，支持部分还款与结清；还款额回写到原销售单的实收，结清时实收 = 应收
 - 采购入库 / 采购退货
 - 进货单支持 Excel 批量导入：一个 Sheet = 一张进货单，先预览校验再批量建单
 - 库存盘点 / 库存预警 / 临期预警
@@ -92,7 +95,10 @@ Beneflow/
 │   └── wwwroot/           # 前端静态页（Vue 3 + Element Plus，动态加载 pages/*.html）
 │       └── lib/           # 离线第三方库（随仓库提交，无需下载）
 |
-├── tests/Beneflow.Tests/  # 测试，包括单元测试和集成测试
+├── tests/Beneflow.Tests/  # 测试工程
+│   ├── TestBase.cs        # 共用夹具：独立 InMemory 库 + 全部 Service 实例 + 种子数据 + 断言辅助
+│   ├── Unit/              # 服务单元测试（21 个文件）
+│   └── Integration/       # 进程内全链路集成测试（14 个文件）
 |
 ├── scripts/               # 部署/运维 PowerShell 脚本
 │   ├── _common.ps1                # 共用库（连接串探测/校验、生产配置生成、实例名解析）
@@ -168,7 +174,7 @@ Beneflow/
 
 ## 测试
 
-**当前状态：426 个用例全部通过（约 35 秒）。**
+**当前状态：496 个用例全部通过（约 50 秒，0 失败、0 警告）。**
 
 ```powershell
 dotnet test tests/Beneflow.Tests/Beneflow.Tests.csproj
@@ -176,17 +182,17 @@ dotnet test tests/Beneflow.Tests/Beneflow.Tests.csproj
 
 测试分两层，另有一组专门的并发一致性测试：
 
-| 层次 | 说明 |
-|---|---|
-| 服务单元测试 | xUnit + EF Core InMemory，每个用例独立数据库，互不影响；覆盖各 Service 的业务分支与边界 |
-| 集成测试 | `WebApplicationFactory<Program>` 在进程内启动真实 API 管线（认证 → 路由 → 控制器 → Service → 数据库），通过 `HttpClient` 真实发起 HTTP 请求，验证跨模块协作与统一响应契约 |
-| 并发一致性测试 | 锁契约测试（确定性同步原语）+ 并发收银不超卖（端到端不变量），见「并发与一致性」一节 |
+| 层次 | 位置 | 说明 |
+|---|---|---|
+| 服务单元测试 | `Unit/`（22 个文件） | xUnit + EF Core InMemory，每个用例独立数据库；覆盖各 Service 的业务分支与边界 |
+| 集成测试 | `Integration/`（14 个文件） | `WebApplicationFactory<Program>` 进程内跑真实 API 管线，经 `HttpClient` 发真实 HTTP 请求，验证跨模块协作与统一响应契约 |
+| 并发一致性测试 | 上述两处 | 锁契约测试 + 并发收银不超卖，见「并发与一致性」一节 |
 
-两层分工以商品档案导入为例是刻意划清的：`Unit/ProductImportTests.cs` 把真实 `.xlsx` 直接喂给 Service，覆盖表头同义词识别、列映射语义、逐行校验与三种落库行为（复杂度所在）；`Integration/ProductImportIntegrationTests.cs` 只补前者结构上测不到的部分——multipart 字段名（前端 `file` / `mapping` ↔ 控制器 `IFormFile` / `[FromForm]`）、未登录 401、模板下载的中文文件名响应头、以及换个端点回查是否真的落库。**任一端把字段改名，前者全绿而功能整体失效，只有后者能发现。**
+公共夹具在 `TestBase.cs`（独立 InMemory 库、全部 Service 实例、基础种子数据，以及给匿名对象取值的断言辅助）；集成测试的基类是 `IntegrationTestBase.cs`。
 
-进货单导入沿用同一划分：`Unit/PurchaseImportTests.cs` 覆盖 Sheet 名 → 供应商匹配、表头同义词识别、条码优先/名称为辅的商品匹配、行级分流（未匹配商品、非法数量进价、整表跳过）以及「预览 → 批量建单」往返；`Integration/PurchaseImportIntegrationTests.cs` 补 401、非 Excel 扩展名与不可读文件的中文失败（不再是 500）、模板可下载，以及「上传预览 → 按前端映射批量建单 → 换个端点回查库存」这条完整链路。
+划分原则是**单元测试吃复杂度，集成测试补结构盲区**，以商品档案导入为例：`Unit/ProductImportTests.cs` 把真实 `.xlsx` 喂给 Service，覆盖表头同义词识别、列映射语义、逐行校验与三种落库行为；`Integration/ProductImportIntegrationTests.cs` 只补前者测不到的部分——multipart 字段名、未登录 401、模板下载的中文文件名响应头、换个端点回查是否真的落库。**字段一改名，前者全绿而功能整体失效，只有后者能发现。** 进货单导入、销售金额口径（金额链 + 列表合计 / 报表 / 导出三处消费侧）都沿用这条划分。
 
-规模：后端源码约 9.4k 行 / 107 个文件（`src/Beneflow.Api/**/*.cs`，不含 EF 自动生成的 `Migrations/`），测试代码约 7.4k 行 / 36 个文件（`tests/**/*.cs`），比例约 0.78 : 1。
+规模：后端源码约 10.3k 行 / 108 个文件（`src/Beneflow.Api/**/*.cs`，不含 EF 自动生成的 `Migrations/`），测试代码约 8.6k 行 / 37 个文件（`tests/**/*.cs`），比例约 0.84 : 1。448 个测试方法（`[Fact]` 429 + `[Theory]` 19），Theory 展开后共 496 个用例。
 
 ## 生产部署
 
