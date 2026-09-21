@@ -763,13 +763,8 @@ function pageSetup(deps) {
         totalAmount: o.totalAmount,
       }));
       const res = await api.post('/purchases/batch', payload);
-      const okCount = (res.created || []).length;
-      const failCount = (res.failed || []).length;
-      if (failCount) {
-        toast('成功 ' + okCount + ' 张，失败 ' + failCount + ' 张，请查看失败明细', 'warning');
-      } else {
-        toast('批量导入完成：' + okCount + ' 张进货单', 'success');
-      }
+      // 整包事务：code==0 即全部建单成功；任何失败由拦截器弹出中文提示（一张都不落库）
+      toast('批量导入完成：' + (res.created || []).length + ' 张进货单', 'success');
       importPreviewDialog.value = false;
       load();
     } catch(e) {}

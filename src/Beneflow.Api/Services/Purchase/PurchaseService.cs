@@ -4,6 +4,7 @@ using Beneflow.Api.Models.Entities;
 using ClosedXML.Excel;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace Beneflow.Api.Services;
 
@@ -125,10 +126,13 @@ public partial class PurchaseService : IPurchaseService
         }
     }
 
-    /// <summary>创建进货单的实际逻辑；调用方须已持有单据号锁与相关商品的库存锁。</summary>
-    private async Task<ApiResult<object>> CreateCoreAsync(CreatePurchaseDto dto)
+    /// <summary>创建进货单的实际逻辑；调用方须已持有单据号锁与相关商品的库存锁。
+    /// 传 sharedTx 时复用外层事务（本方法不提交、不回滚，交由调用方整包收尾），供批量导入使用；
+    /// 不传则自开事务、成功提交、失败回滚。</summary>
+    private async Task<ApiResult<object>> CreateCoreAsync(CreatePurchaseDto dto, IDbContextTransaction? sharedTx = null)
     {
-        await using var tx = await _db.Database.BeginTransactionAsync();
+        var ownsTx = sharedTx is null;
+        var tx = sharedTx ?? await _db.Database.BeginTransactionAsync();
         try
         {
             var todayCount = await _db.PurchaseOrders.CountAsync(o => o.CreatedAt >= DateTime.Today);
@@ -200,13 +204,18 @@ public partial class PurchaseService : IPurchaseService
                 Action = "创建进货单", Target = $"{orderNo} 合计 ¥{order.TotalAmount}",
             });
             await _db.SaveChangesAsync();
-            await tx.CommitAsync();
+            if (ownsTx) await tx.CommitAsync();
             return ApiResult<object>.Ok(new { id = order.Id, orderNo });
         }
         catch (Exception ex)
         {
-            await tx.RollbackAsync();
+            if (ownsTx) await tx.RollbackAsync();
             throw new InvalidOperationException("创建进货单失败：" + ex.Message, ex);
+        }
+        finally
+        {
+            // 共享事务的生命周期归调用方（批量导入整包提交），这里不能替它释放
+            if (ownsTx) await tx.DisposeAsync();
         }
     }
 

@@ -192,9 +192,39 @@ public class PurchaseImportIntegrationTests : IntegrationTestBase
         var batch = await ExpectOk(await PostJsonAsync("/api/v1/purchases/batch", payload));
         Assert.Equal(1, batch.GetProperty("total").GetInt32());
         Assert.Equal(1, batch.GetProperty("created").GetArrayLength());
-        Assert.Equal(0, batch.GetProperty("failed").GetArrayLength());
 
         // 3) 跨端点回查：预览里显示的数量真的变成了库存
         Assert.Equal(before + 10, await StockOf(SeedBarcode));
+    }
+
+    [Fact]
+    public async Task ImportBatch_AnyOrderRejected_NothingWritten()
+    {
+        await LoginAsAdminAsync();
+        var before = await StockOf(SeedBarcode);
+
+        // 走预览接口拿真实 supplierId / productId（与前端流程一致）
+        var data = await ExpectOk(await Client.PostAsync("/api/v1/purchases/import/preview",
+            Multipart(XlsxFor(SeedSupplier, new[] { "条码", "商品名称", "数量", "进价" },
+                new[] { SeedBarcode, "可口可乐 330ml", "1", "1.60" }), "进货单.xlsx")));
+        var order = data.GetProperty("orders")[0];
+        var supplierId = order.GetProperty("supplierId").GetInt32();
+        var productId = order.GetProperty("items")[0].GetProperty("productId").GetInt32();
+
+        // 第 1 张本可成功、第 2 张引用不存在的商品
+        var payload = new object[]
+        {
+            new { supplierId, details = new[] { new { productId, qty = 10m, costPrice = 1.60m, produceDate = (string?)null } } },
+            new { supplierId, details = new[] { new { productId = 99999, qty = 1m, costPrice = 1m, produceDate = (string?)null } } },
+        };
+
+        var resp = await PostJsonAsync("/api/v1/purchases/batch", payload);
+        var body = await ReadBody(resp);
+        Assert.NotEqual(0, body.GetProperty("code").GetInt32());
+        Assert.Contains("第 2 张", body.GetProperty("message").GetString());
+        Assert.Contains("不存在", body.GetProperty("message").GetString());
+
+        // 整包语义：一张都不落库，库存纹丝不动
+        Assert.Equal(before, await StockOf(SeedBarcode));
     }
 }

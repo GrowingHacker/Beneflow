@@ -16,7 +16,7 @@
 - 销售单详情：优惠是**商品级**的，详情按商品行列出「挂牌价 → 成交价 / 让利 / 等效折率 / 已退」，订单行的「优惠」即各行让利合计，看得到每个商品让了多少
 - 销售退货 / 赊账管理：赊账按微信号挂账，支持部分还款与结清；还款额回写到原销售单的实收，结清时实收 = 应收
 - 采购入库 / 采购退货
-- 进货单支持 Excel 批量导入：一个 Sheet = 一张进货单，先预览校验再批量建单
+- 进货单支持 Excel 批量导入：一个 Sheet = 一张进货单，先预览校验再批量建单；批量建单是整包事务，要么全部成功、要么全部回滚，任何一张校验不过都会指明第几张且不写库
 - 库存盘点 / 库存预警 / 临期预警
 - 商品档案支持 Excel 批量导入：按同义词自动识别列名（品名/货品/零售价…），识别不准可在预览页手动改列映射；条码已存在时可选择跳过或覆盖更新；文件需为 `.xlsx` 格式（旧版 `.xls` 读不了，会明确提示另存为而不是报错）
 - 商品条码：扫码录入；系统首页生成二维码，手机扫码后打开手机端入库页面（html5-qrcode，需 HTTPS 调用摄像头）
@@ -97,7 +97,7 @@ Beneflow/
 |
 ├── tests/Beneflow.Tests/  # 测试工程
 │   ├── TestBase.cs        # 共用夹具：独立 InMemory 库 + 全部 Service 实例 + 种子数据 + 断言辅助
-│   ├── Unit/              # 服务单元测试（21 个文件）
+│   ├── Unit/              # 服务单元测试（22 个文件）
 │   └── Integration/       # 进程内全链路集成测试（14 个文件）
 |
 ├── scripts/               # 部署/运维 PowerShell 脚本
@@ -174,10 +174,10 @@ Beneflow/
 
 ## 测试
 
-**当前状态：496 个用例全部通过（约 50 秒，0 失败、0 警告）。**
+**当前状态：501 个用例全部通过（Release 约 41 秒，0 失败、0 警告）。**
 
 ```powershell
-dotnet test tests/Beneflow.Tests/Beneflow.Tests.csproj
+dotnet test tests/Beneflow.Tests/Beneflow.Tests.csproj --configuration Release
 ```
 
 测试分两层，另有一组专门的并发一致性测试：
@@ -192,7 +192,7 @@ dotnet test tests/Beneflow.Tests/Beneflow.Tests.csproj
 
 划分原则是**单元测试吃复杂度，集成测试补结构盲区**，以商品档案导入为例：`Unit/ProductImportTests.cs` 把真实 `.xlsx` 喂给 Service，覆盖表头同义词识别、列映射语义、逐行校验与三种落库行为；`Integration/ProductImportIntegrationTests.cs` 只补前者测不到的部分——multipart 字段名、未登录 401、模板下载的中文文件名响应头、换个端点回查是否真的落库。**字段一改名，前者全绿而功能整体失效，只有后者能发现。** 进货单导入、销售金额口径（金额链 + 列表合计 / 报表 / 导出三处消费侧）都沿用这条划分。
 
-规模：后端源码约 10.3k 行 / 108 个文件（`src/Beneflow.Api/**/*.cs`，不含 EF 自动生成的 `Migrations/`），测试代码约 8.6k 行 / 37 个文件（`tests/**/*.cs`），比例约 0.84 : 1。448 个测试方法（`[Fact]` 429 + `[Theory]` 19），Theory 展开后共 496 个用例。
+规模：后端源码约 10.3k 行 / 108 个文件（`src/Beneflow.Api/**/*.cs`，不含 EF 自动生成的 `Migrations/`），测试代码约 8.7k 行 / 37 个文件（`tests/**/*.cs`），比例约 0.84 : 1。453 个测试方法（`[Fact]` 434 + `[Theory]` 19），Theory 展开后共 501 个用例。
 
 ## 生产部署
 

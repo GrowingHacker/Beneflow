@@ -331,7 +331,6 @@ public class PurchaseImportTests : TestBase
         Assert.Equal(0, batch.Code);
         Assert.Equal(1, Prop<int>(batch.Data, "total"));
         Assert.Single(Prop<List<object>>(batch.Data, "created")!);
-        Assert.Empty(Prop<List<object>>(batch.Data, "failed")!);
 
         // 解析出来的数量/进价真的落到了库存与移动加权成本
         Assert.Equal(3m, GetProduct(ProductAId).StockQuantity);
@@ -343,5 +342,76 @@ public class PurchaseImportTests : TestBase
         var batchRow = Db.Batches.AsNoTracking().Single(b => b.ProductId == ProductBId);
         Assert.Equal(new DateTime(2026, 1, 1), batchRow.ProduceDate);
         Assert.Equal(new DateTime(2026, 1, 1).AddDays(365), batchRow.ExpireDate);
+    }
+
+    // ================= 批量建单的整包语义 =================
+
+    /// <summary>便捷构造：单商品进货单 DTO</summary>
+    private CreatePurchaseDto OrderOf(int productId, decimal qty, decimal costPrice) => new()
+    {
+        SupplierId = SupplierId,
+        Details = new List<PurchaseDetailDto> { new() { ProductId = productId, Qty = qty, CostPrice = costPrice } },
+    };
+
+    [Fact]
+    public async Task CreateBatch_MultiOrder_AllCreatedAndStockUpdated()
+    {
+        var r = await PurchaseSvc.CreateBatchAsync(new List<CreatePurchaseDto>
+        {
+            OrderOf(ProductAId, 2, 5m),
+            OrderOf(ProductBId, 3, 8m),
+        });
+
+        Assert.Equal(0, r.Code);
+        Assert.Equal(2, Prop<int>(r.Data, "total"));
+        Assert.Equal(2, Prop<List<object>>(r.Data, "created")!.Count);
+        Assert.Equal(2m, GetProduct(ProductAId).StockQuantity);
+        Assert.Equal(3m, GetProduct(ProductBId).StockQuantity);
+    }
+
+    [Fact]
+    public async Task CreateBatch_AnyOrderParamInvalid_RejectsWholeBatchAndWritesNothing()
+    {
+        // 第 2 张数量非法：整批拒绝，第 1 张（本可成功）也一并不落库
+        var r = await PurchaseSvc.CreateBatchAsync(new List<CreatePurchaseDto>
+        {
+            OrderOf(ProductAId, 2, 5m),
+            OrderOf(ProductBId, 0, 8m),
+        });
+
+        Assert.NotEqual(0, r.Code);
+        Assert.Contains("第 2 张", r.Message);
+        Assert.Empty(Db.PurchaseOrders.AsNoTracking().ToList());
+        Assert.Equal(0m, GetProduct(ProductAId).StockQuantity);
+    }
+
+    [Fact]
+    public async Task CreateBatch_ProductMissingInAnyOrder_RejectsWholeBatch()
+    {
+        // 商品存在性也前置校验：指明第几张、哪个商品，且不写任何库
+        var r = await PurchaseSvc.CreateBatchAsync(new List<CreatePurchaseDto>
+        {
+            OrderOf(ProductAId, 2, 5m),
+            OrderOf(99999, 1, 1m),
+        });
+
+        Assert.NotEqual(0, r.Code);
+        Assert.Contains("第 2 张", r.Message);
+        Assert.Contains("不存在", r.Message);
+        Assert.Empty(Db.PurchaseOrders.AsNoTracking().ToList());
+        Assert.Equal(0m, GetProduct(ProductAId).StockQuantity);
+    }
+
+    [Fact]
+    public async Task CreateBatch_SupplierMissing_RejectsWholeBatch()
+    {
+        var dto = OrderOf(ProductAId, 1, 5m);
+        dto.SupplierId = 99999;
+
+        var r = await PurchaseSvc.CreateBatchAsync(new List<CreatePurchaseDto> { dto });
+
+        Assert.NotEqual(0, r.Code);
+        Assert.Contains("供应商不存在", r.Message);
+        Assert.Empty(Db.PurchaseOrders.AsNoTracking().ToList());
     }
 }

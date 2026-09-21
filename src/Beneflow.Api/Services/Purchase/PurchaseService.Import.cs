@@ -183,29 +183,73 @@ public partial class PurchaseService : IPurchaseService
         return ApiResult<object>.Ok(new { orders, unmatchedSheets, unmatchedProducts, skippedSheets, totalSheets = wb.Worksheets.Count, totalRows });
     }
 
-    /// <summary>批量创建进货单：逐张调用 CreateAsync（各自独立事务），返回成功/失败明细</summary>
+    /// <summary>
+    /// 批量创建进货单：整批一个事务，要么全部落库、要么全部回滚——
+    /// 避免中途断电或部分失败后「用户不知道哪几张已建单」的中间态。
+    /// 与建单有关的业务校验（明细 / 数量 / 进价 / 供应商 / 商品存在性）全部前置，
+    /// 任何一张不过就整批拒绝且不写库；事务内只兜技术异常。
+    /// </summary>
     public async Task<ApiResult<object>> CreateBatchAsync(List<CreatePurchaseDto> dtos)
     {
         if (dtos == null || dtos.Count == 0)
             return ApiResult<object>.Fail("没有进货单数据");
 
-        var created = new List<object>();
-        var failed = new List<object>();
+        // ---- 前置校验：与 CreateAsync / CreateCoreAsync 同一套判据，失败指明第几张 ----
         for (var i = 0; i < dtos.Count; i++)
         {
-            var dto = dtos[i];
+            var d = dtos[i];
+            if (d?.Details == null || d.Details.Count == 0)
+                return ApiResult<object>.Fail($"第 {i + 1} 张进货单：请添加商品明细");
+            if (d.Details.Any(x => x.Qty <= 0))
+                return ApiResult<object>.Fail($"第 {i + 1} 张进货单：进货数量必须大于 0");
+            if (d.Details.Any(x => x.CostPrice < 0))
+                return ApiResult<object>.Fail($"第 {i + 1} 张进货单：进价不能为负");
+        }
+
+        var supplierIds = dtos.Select(d => d!.SupplierId).Distinct().ToList();
+        var knownSupplierIds = (await _db.Suppliers.Where(s => supplierIds.Contains(s.Id)).ToListAsync())
+            .Select(s => s.Id).ToHashSet();
+        for (var i = 0; i < dtos.Count; i++)
+            if (!knownSupplierIds.Contains(dtos[i]!.SupplierId))
+                return ApiResult<object>.Fail($"第 {i + 1} 张进货单：供应商不存在");
+
+        var productIds = dtos.SelectMany(d => d!.Details.Select(x => x.ProductId)).Distinct().ToList();
+        var knownProductIds = (await _db.Products.Where(p => productIds.Contains(p.Id)).ToListAsync())
+            .Select(p => p.Id).ToHashSet();
+        for (var i = 0; i < dtos.Count; i++)
+        {
+            var missing = dtos[i]!.Details.Select(x => x.ProductId).FirstOrDefault(id => !knownProductIds.Contains(id));
+            if (missing != 0)
+                return ApiResult<object>.Fail($"第 {i + 1} 张进货单：商品 ID {missing} 不存在");
+        }
+
+        // ---- 整包落库：加锁顺序与 CreateAsync 一致（先单据号锁再库存锁），整批持有到事务结束 ----
+        using (await _stockLock.AcquireOrderNoAsync())
+        using (await _stockLock.AcquireAsync(dtos.SelectMany(d => d!.Details.Select(x => x.ProductId))))
+        {
+            await using var tx = await _db.Database.BeginTransactionAsync();
+            var created = new List<object>();
             try
             {
-                var r = await CreateAsync(dto);
-                if (r.Code == 0 && r.Data != null) created.Add(r.Data);
-                else failed.Add(new { index = i, supplierId = dto.SupplierId, message = r.Message });
+                for (var i = 0; i < dtos.Count; i++)
+                {
+                    var r = await CreateCoreAsync(dtos[i], tx);
+                    if (r.Code != 0)
+                    {
+                        await tx.RollbackAsync();
+                        return ApiResult<object>.Fail($"第 {i + 1} 张进货单创建失败：{r.Message}，本批已全部回滚");
+                    }
+                    if (r.Data != null) created.Add(r.Data);
+                }
+                await tx.CommitAsync();
+                return ApiResult<object>.Ok(new { created, total = dtos.Count });
             }
             catch (Exception ex)
             {
-                failed.Add(new { index = i, supplierId = dto.SupplierId, message = ex.Message });
+                await tx.RollbackAsync();
+                throw new InvalidOperationException("进货单批量导入失败：" + ex.Message, ex);
             }
         }
-        return ApiResult<object>.Ok(new { created, failed, total = dtos.Count });
     }
 
     /// <summary>生成进货单批量导入模板 .xlsx：第1个 Sheet 为使用说明，其后每个示例 Sheet 名 = 供应商名</summary>

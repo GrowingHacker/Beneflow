@@ -261,12 +261,13 @@ public class ReportService : IReportService
             unsettledCount = g.Count(x => !x.Status),
         }).OrderByDescending(x => x.remainingTotal).ToListAsync();
 
-        var stats = await q.GroupBy(_ => 1).Select(g => new
+        // GroupBy(1) 聚合最多返回一行：ToList 让聚合留在 SQL 端，又避免 First 生成无 WHERE 的 TOP(1)
+        var stats = (await q.GroupBy(_ => 1).Select(g => new
         {
             TotalCredit = g.Sum(x => x.CreditAmount),
             PaidCredit = g.Sum(x => x.PaidAmount),
             UnpaidCredit = g.Sum(x => x.RemainingAmount),
-        }).FirstOrDefaultAsync();
+        }).ToListAsync()).FirstOrDefault();
 
         return new
         {

@@ -126,6 +126,8 @@ public partial class ProductService : IProductService
                 Status = p.Status ? "上架" : "下架",
                 p.PromoType, p.PromoPrice, p.PromoRate, p.PromoEnabled, p.PromoStartAt, p.PromoEndAt,
             })
+            // 排序后再取第一条：条码无唯一约束时结果才是确定的（否则是「哪一行都行」），也避免 EF 的行限制告警
+            .OrderBy(p => p.Id)
             .Take(1).ToListAsync();
         if (row.Count == 0) return ApiResult<object?>.Fail("商品不存在");
 
@@ -155,7 +157,7 @@ public partial class ProductService : IProductService
             {
                 p.Id, p.Name, p.Barcode, p.PinyinCode,
                 p.SalePrice, p.Unit, p.StockQuantity,
-                CategoryName = _db.Categories.Where(c => c.Id == p.CategoryId).Select(c => c.Name).FirstOrDefault() ?? "未分类",
+                CategoryName = _db.Categories.Where(c => c.Id == p.CategoryId).OrderBy(c => c.Id).Select(c => c.Name).FirstOrDefault() ?? "未分类",
                 p.PromoType, p.PromoPrice, p.PromoRate, p.PromoEnabled, p.PromoStartAt, p.PromoEndAt,
             })
             .OrderBy(p => p.CategoryName).ThenBy(p => p.Name)

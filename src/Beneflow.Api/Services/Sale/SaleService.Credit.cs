@@ -69,7 +69,8 @@ public partial class SaleService : ISaleService
                 UnsettledCount = g.Count(x => !x.Status),
                 SettledCount = g.Count(x => x.Status),
             };
-        var s = await statsQ.FirstOrDefaultAsync();
+        // GroupBy(1) 聚合最多返回一行：ToList 让聚合留在 SQL 端，又避免 First 生成无 WHERE 的 TOP(1)
+        var s = (await statsQ.ToListAsync()).FirstOrDefault();
         var stats = new
         {
             totalCredit = Math.Round(s?.TotalCredit ?? 0, 2),

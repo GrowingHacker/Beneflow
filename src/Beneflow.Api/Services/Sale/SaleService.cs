@@ -42,7 +42,9 @@ public partial class SaleService : ISaleService
         // 实收合计口径：只算真正到手的钱。赊账单的实收 = 累计已还款额（还款时回写到原单），
         // 未还部分不存在单里，自然不计入；作废单整单剔除。
         // 注意这是「订单口径」——还款当天更新的是原单的实收，因此该笔钱记在原单日期，不记还款日。
-        var sum = await q.Where(x => !x.o.IsVoided)
+        // GroupBy(1) 聚合最多返回一行：ToList 让聚合留在 SQL 端，又避免 First 生成 TOP(1)
+        // （join + GroupBy 会把 WHERE 下压进子查询，外层 SelectExpression 既无谓词也无排序，EF 会告警）
+        var sum = (await q.Where(x => !x.o.IsVoided)
             .GroupBy(x => 1)
             .Select(g => new
             {
@@ -53,7 +55,7 @@ public partial class SaleService : ISaleService
                 PayAmount = g.Sum(x => x.o.PayAmount),
                 ReceivedAmount = g.Sum(x => x.o.ReceivedAmount),
                 ChangeAmount = g.Sum(x => x.o.ChangeAmount),
-            }).FirstOrDefaultAsync();
+            }).ToListAsync()).FirstOrDefault();
 
         pageSize = pageSize <= 0 ? 20 : Math.Min(pageSize, 200);
         page = Math.Max(1, page);

@@ -21,7 +21,7 @@ public interface IPurchaseService
     /// <summary>解析进货单导入 Excel，返回预览明细和错误（不写库）</summary>
     Task<ApiResult<object>> ParseImportAsync(IFormFile file);
 
-    /// <summary>批量创建进货单：逐张调用 CreateAsync（各自独立事务），返回成功/失败明细</summary>
+    /// <summary>批量创建进货单：整批一个事务，要么全部成功要么全部回滚；校验失败指明第几张单</summary>
     Task<ApiResult<object>> CreateBatchAsync(List<CreatePurchaseDto> dtos);
 
     /// <summary>生成进货单导入模板 .xlsx</summary>
