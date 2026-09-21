@@ -377,6 +377,9 @@ public partial class SettingService : ISettingService
         {
             await using var conn = new Microsoft.Data.SqlClient.SqlConnection(MasterConnString);
             await conn.OpenAsync();
+            // 恢复前必须主动清空连接池：池中被踢掉的失效连接要等下一次通信才被检测到，
+            // 首次复用会抛异常（ADO.NET 连接池官方机制）。主动清池让这些连接直接丢弃、不再归还。
+            Microsoft.Data.SqlClient.SqlConnection.ClearAllPools();
             await ExecAsync(conn, $"ALTER DATABASE {db} SET SINGLE_USER WITH ROLLBACK IMMEDIATE;");
             try
             {

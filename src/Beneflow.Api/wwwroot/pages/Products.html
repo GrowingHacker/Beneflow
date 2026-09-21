@@ -3,7 +3,6 @@
     <div class="toolbar">
       <el-input v-model="keyword" placeholder="商品名称 / 条码" clearable style="width:220px;" @keyup.enter="search" />
       <el-button type="primary" @click="search">查询</el-button>
-      <el-button @click="reset">重置</el-button>
 
       <!-- 动作组整体贴右。导入/导出各收成一个下拉：5 个同级按钮挤一行，窄屏换行后
            最后一个按钮会被甩到最左边，而且「下载模板」夹在两个「导出」中间，把
@@ -339,7 +338,6 @@ function pageSetup(deps) {
     finally { loading.value = false; }
   }
   function search() { page.value = 1; load(); }
-  function reset() { keyword.value = ''; page.value = 1; load(); }
 
   function openCreate() {
     suppressCatWatch = true;
@@ -555,7 +553,7 @@ function pageSetup(deps) {
 
   onMounted(function () { load(); loadCats(); loadDicts(); });
   return { list, loading, keyword, page, pageSize, total, dialog, form, common, cats, unitOptions, specOptions,
-    load, search, reset, openCreate, openEdit, save, toggleStatus, remove, expireTag, exportCsv, exportExcel, onWeightedChange,
+    load, search, openCreate, openEdit, save, toggleStatus, remove, expireTag, exportCsv, exportExcel, onWeightedChange,
     importing, importPreviewDialog, importRows, importFields, importHeaders, importMapping, importSheetName,
     importSummary, importNotice, duplicatePolicy, importSubmitting, importFailed, importReadyCount,
     importRowTag, reparse, downloadTemplate, importExcel, confirmImport,
