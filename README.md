@@ -175,7 +175,7 @@ Beneflow/
 
 ## 测试
 
-**当前状态：554 个用例全部通过（Release 约 1 分钟，0 失败、0 警告）。**
+**当前状态：646 个用例全部通过（Release 约 1 分钟，0 失败、0 警告）。**
 
 ```powershell
 dotnet test tests/Beneflow.Tests/Beneflow.Tests.csproj --configuration Release
@@ -186,14 +186,24 @@ dotnet test tests/Beneflow.Tests/Beneflow.Tests.csproj --configuration Release
 | 层次 | 位置 | 说明 |
 |---|---|---|
 | 服务单元测试 | `Unit/`（25 个文件） | xUnit + EF Core InMemory，每个用例独立数据库；覆盖各 Service 的业务分支与边界 |
-| 集成测试 | `Integration/`（14 个文件） | `WebApplicationFactory<Program>` 进程内跑真实 API 管线，经 `HttpClient` 发真实 HTTP 请求，验证跨模块协作与统一响应契约 |
+| 集成测试 | `Integration/`（24 个文件） | `WebApplicationFactory<Program>` 进程内跑真实 API 管线，经 `HttpClient` 发真实 HTTP 请求，验证跨模块协作与统一响应契约 |
 | 并发一致性测试 | 上述两处 | 锁契约测试 + 并发收银不超卖，见「并发与一致性」一节 |
 
-公共夹具在 `TestBase.cs`（独立 InMemory 库、全部 Service 实例、基础种子数据，以及按 **JSON 字段名**取返回体字段的断言辅助——取的是前端实际读到的那个名字，属性改名不会被漏掉）；集成测试的基类是 `IntegrationTestBase.cs`。
+公共夹具在 `TestBase.cs`（独立 InMemory 库、全部 Service 实例、基础种子数据，以及按 **JSON 字段名**取返回体字段的断言辅助——取的是前端实际读到的那个名字，属性改名不会被漏掉）；集成测试的基类是 `IntegrationTestBase.cs`，各测试文件共用的「铺数据」动作（建档 / 进货 / 收银）抽在 `IntegrationSeedBase.cs` 里，且一律走真实 HTTP 端点而不是直接写 DbContext——铺数据这条路本身也在被测范围内。
 
 划分原则是**单元测试吃复杂度，集成测试补结构盲区**，以商品档案导入为例：`Unit/ProductImportTests.cs` 把真实 `.xlsx` 喂给 Service，覆盖表头同义词识别、列映射语义、逐行校验与三种落库行为；`Integration/ProductImportIntegrationTests.cs` 只补前者测不到的部分——multipart 字段名、未登录 401、模板下载的中文文件名响应头、换个端点回查是否真的落库。**字段一改名，前者全绿而功能整体失效，只有后者能发现。** 进货单导入、销售金额口径（金额链 + 列表合计 / 报表 / 导出三处消费侧）都沿用这条划分。
 
-规模：后端源码约 11.2k 行 / 113 个文件（`src/Beneflow.Api/**/*.cs`，不含 EF 自动生成的 `Migrations/`），测试代码约 9.7k 行 / 40 个文件（`tests/**/*.cs`），比例约 0.87 : 1。506 个测试方法（`[Fact]` 487 + `[Theory]` 19），Theory 展开后共 554 个用例。
+### 上线前真机验收
+
+单元 / 集成测试跑的是 **InMemory**，有两类问题它永远发现不了：真库结构与代码不一致（迁移没应用到库 ⇒ 接口 500「Invalid column name」），以及 EF 的 LINQ 无法被真 SQL Server 翻译。所以上线前还要对真库验一次：
+
+- **接口探活**：按接口清单逐条打一遍，判据是**不允许 5xx 与「服务器内部错误」**——业务拒绝（HTTP 200 + `code≠0`）不算失败。
+- **写链路闭环**：建档 → 进货 → 收银 → 退货 → 作废 → 报表 → 导出，每步用上一步返回的主键，最后核对库存与金额。
+- **迁移一致性**：比对「代码里的迁移文件」与 `__EFMigrationsHistory`，待应用必须为 0。
+
+全程用一次性临时库（跑完即删、备份目录重定向到临时目录），不碰开发库。
+
+规模：后端源码约 11.2k 行 / 113 个文件（`src/Beneflow.Api/**/*.cs`，不含 EF 自动生成的 `Migrations/`），测试代码约 11.9k 行 / 50 个文件（`tests/**/*.cs`），比例约 1.06 : 1。582 个测试方法（`[Fact]` 561 + `[Theory]` 21），Theory 展开后共 646 个用例。
 
 ## 生产部署
 

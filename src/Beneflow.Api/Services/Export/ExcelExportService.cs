@@ -75,6 +75,7 @@ public class ExcelExportService : IExcelExportService
 
         // ---- 合计行 ----
         var hasSummary = !string.IsNullOrEmpty(report.SummaryLabel) && report.SummaryFields.Count > 0;
+        var labelIndex = LabelColumnIndex(report);   // 合计行标签列（下文列宽计算也要用）
         if (hasSummary)
         {
             var sums = new Dictionary<string, double>();
@@ -91,7 +92,7 @@ public class ExcelExportService : IExcelExportService
                 var cell = ws.Cell(r, i + 1);
                 cell.Style.Font.Bold = true;
                 cell.Style.Fill.BackgroundColor = XLColor.FromHtml(SummaryBg);
-                if (col.IsLabel)
+                if (i == labelIndex)
                 {
                     cell.Value = report.SummaryLabel;
                     cell.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
@@ -135,7 +136,7 @@ public class ExcelExportService : IExcelExportService
             // 合计行：标签列取 SummaryLabel，金额列取格式化后的合计值
             if (hasSummary)
             {
-                if (col.IsLabel)
+                if (c == labelIndex)
                     maxW = Math.Max(maxW, DisplayWidth(report.SummaryLabel ?? ""));
                 else if (summaryValues.TryGetValue(col.Field, out var sumVal))
                 {
@@ -206,15 +207,27 @@ public class ExcelExportService : IExcelExportService
                 foreach (var f in report.SummaryFields)
                     if (row.TryGetValue(f, out var v) && v != null && double.TryParse(v.ToString(), out var d))
                         sums[f] += d;
-            sb.AppendLine(string.Join(",", report.Columns.Select(c =>
+            var labelIndex = LabelColumnIndex(report);
+            sb.AppendLine(string.Join(",", report.Columns.Select((c, idx) =>
             {
-                if (c.IsLabel) return Esc(report.SummaryLabel!);
+                if (idx == labelIndex) return Esc(report.SummaryLabel!);
                 if (sums.ContainsKey(c.Field))
                     return Esc(c.Type == ExcelColumnType.Money ? sums[c.Field].ToString("F2") : sums[c.Field].ToString("F0"));
                 return Esc("");
             })));
         }
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// 合计行的标签列下标：显式标了 <see cref="ExcelColumn.IsLabel"/> 就用它（唯一一处，多个只看第一个），
+    /// 一个都没标则回退到**第一列** —— 这是 <see cref="ExcelColumn.IsLabel"/> 文档写明的默认约定。
+    /// 没有这层回退时，所有导出端点的合计行都只有数字、标签列是空的（列定义里没人显式设过 IsLabel）。
+    /// </summary>
+    private static int LabelColumnIndex(ExcelReport report)
+    {
+        var idx = report.Columns.FindIndex(c => c.IsLabel);
+        return idx >= 0 ? idx : 0;
     }
 
     /// <summary>按列类型把值格式化为 CSV 单元文本（金额 2 位小数、整数 0 位、其余原值）</summary>
