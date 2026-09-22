@@ -29,7 +29,7 @@ public class AuthController : BaseApiController
     /// <summary>登录换取 JWT token；用户名或密码连续错误会锁定账号</summary>
     [HttpPost("login")]
     [AllowAnonymous]
-    public async Task<ApiResult<object>> Login([FromBody] LoginDto dto)
+    public async Task<ApiResult<LoginResultDto>> Login([FromBody] LoginDto dto)
     {
         var result = await _auth.LoginAsync(dto.Username ?? "", dto.Password ?? "", _me.ClientIp);
         return result;

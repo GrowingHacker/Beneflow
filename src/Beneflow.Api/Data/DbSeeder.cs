@@ -340,7 +340,8 @@ public static class DbSeeder
             ConfigKey = key, ConfigValue = JsonSerializer.Serialize(val), UpdatedAt = DateTime.Now,
         });
         SetCfg("shop", new { name = "百惠通便利店", phone = "020-88888888", address = "中山市东区XX路1号", logo = "" });
-        SetCfg("sale", new { allowCredit = true, defaultPayMethod = "现金" });
+        // 三个限额 = 收银台让利风控的「常规额度」，超出即需店主授权。须与 SettingService.GetAsync 的默认值保持一致
+        SetCfg("sale", new { allowCredit = true, defaultPayMethod = "现金", maxOrderDiscount = 50m, minDiscountRate = 9m, maxRoundOff = 1m });
         SetCfg("receipt", new { header = "百惠通便利店", footer = "欢迎再次光临", autoPrint = false });
         SetCfg("stock", new { warningThreshold = 1, expiryDays = 30 });
         SetCfg("units", new[] { "个", "瓶", "盒", "箱", "袋", "包", "罐", "听", "支", "条", "桶", "杯", "份", "块", "双", "张", "斤", "千克", "克", "升", "毫升" });

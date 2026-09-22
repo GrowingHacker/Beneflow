@@ -12,7 +12,7 @@ public class RoleService : IRoleService
     private readonly ILogService _logs;
     public RoleService(AppDbContext db, ILogService logs) { _db = db; _logs = logs; }
 
-    public async Task<List<object>> ListAsync()
+    public async Task<List<RoleListItemDto>> ListAsync()
     {
         var roles = await _db.Roles.AsNoTracking().OrderBy(r => r.Id).ToListAsync();
         var counts = await (
@@ -22,25 +22,25 @@ public class RoleService : IRoleService
             group ur by ur.RoleId into g
             select new { g.Key, Count = g.Count() }).ToDictionaryAsync(x => x.Key, x => x.Count);
 
-        return roles.Select(r => (object)new
+        return roles.Select(r => new RoleListItemDto
         {
-            id = r.Id, name = r.Name, code = r.Code, desc = r.Description ?? "",
-            status = r.Status ? "启用" : "禁用", userCount = counts.GetValueOrDefault(r.Id),
+            Id = r.Id, Name = r.Name, Code = r.Code, Desc = r.Description ?? "",
+            Status = r.Status ? "启用" : "禁用", UserCount = counts.GetValueOrDefault(r.Id),
         }).ToList();
     }
 
-    public async Task<ApiResult<object>> CreateAsync(string name, string code, string? desc)
+    public async Task<ApiResult<IdResultDto>> CreateAsync(string name, string code, string? desc)
     {
         code = code?.Trim() ?? "";
         name = name?.Trim() ?? "";
-        if (name.Length == 0 || code.Length == 0) return ApiResult<object>.Fail("请填写角色名称和编码");
-        if (await _db.Roles.AnyAsync(r => r.Code == code)) return ApiResult<object>.Fail("角色编码已存在");
+        if (name.Length == 0 || code.Length == 0) return ApiResult<IdResultDto>.Fail("请填写角色名称和编码");
+        if (await _db.Roles.AnyAsync(r => r.Code == code)) return ApiResult<IdResultDto>.Fail("角色编码已存在");
         var role = new Role { Name = name, Code = code, Description = desc };
         _db.Roles.Add(role);
         await _db.SaveChangesAsync();
         await _logs.WriteAsync("角色管理", "新增角色", $"{code}/{name}");
         await _db.SaveChangesAsync();
-        return ApiResult<object>.Ok(new { id = role.Id });
+        return ApiResult<IdResultDto>.Ok(new IdResultDto { Id = role.Id });
     }
 
     public async Task<ApiResult> UpdateAsync(int id, string name, string? desc)

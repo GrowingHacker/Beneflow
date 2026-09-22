@@ -189,7 +189,42 @@ public class ProductServiceTests : TestBase
     {
         var r = await ProductSvc.UpdateAsync(ProductAId, Json("{\"barcode\":\"B001\"}"));
         Assert.NotEqual(0, r.Code);
-        Assert.Contains("已被其他商品使用", r.Message);
+        // 文案与新增入口统一（同一个判断只有一种说法），见 CheckBarcodeFreeAsync
+        Assert.Contains("已存在", r.Message);
+    }
+
+    // ================= 条码被「已删除商品」占用 =================
+    // 删除是软删除（只翻 IsDeleted，保留在库便于追溯），而条码唯一索引不看 IsDeleted。
+    // 不拦这种情况，真库上落库时会撞唯一索引抛异常、用户只看到 500。
+    // 注意：InMemory 不实施唯一索引，所以这里只能断言「返回业务失败」，
+    // 表达不了「否则会抛异常」这件事（那只有在真 SQL Server 上才看得到）。
+
+    [Fact]
+    public async Task CreateAsync_BarcodeOccupiedByDeletedProduct_ReturnsBusinessError()
+    {
+        var created = await ProductSvc.CreateAsync(NewProduct("已下架商品", "GHOST01"));
+        Assert.Equal(0, created.Code);
+        var ghostId = GetResultDataProp<int>(created.Data!, "id");
+        Assert.Equal(0, (await ProductSvc.DeleteAsync(ghostId)).Code);
+
+        var again = await ProductSvc.CreateAsync(NewProduct("重新上架", "GHOST01"));
+
+        Assert.NotEqual(0, again.Code);
+        Assert.Contains("已被已删除的商品", again.Message);
+        Assert.Contains("已下架商品", again.Message);   // 要告诉用户被哪个商品占着
+    }
+
+    [Fact]
+    public async Task UpdateAsync_BarcodeOccupiedByDeletedProduct_ReturnsBusinessError()
+    {
+        var created = await ProductSvc.CreateAsync(NewProduct("已下架商品", "GHOST02"));
+        var ghostId = GetResultDataProp<int>(created.Data!, "id");
+        Assert.Equal(0, (await ProductSvc.DeleteAsync(ghostId)).Code);
+
+        var r = await ProductSvc.UpdateAsync(ProductAId, Json("{\"barcode\":\"GHOST02\"}"));
+
+        Assert.NotEqual(0, r.Code);
+        Assert.Contains("已被已删除的商品", r.Message);
     }
 
     [Fact]

@@ -21,6 +21,24 @@
               <el-option v-for="m in form.payMethods" :key="m" :label="m" :value="m" />
             </el-select>
           </el-form-item>
+          <el-divider style="margin:6px 0 16px;" />
+          <el-form-item label="整单优惠上限">
+            <el-input-number v-model="form.sale.maxOrderDiscount" :min="0" :precision="2" :step="10" controls-position="right" />
+            <span class="muted" style="margin-left:8px;">元</span>
+          </el-form-item>
+          <el-form-item label="最低折扣">
+            <el-input-number v-model="form.sale.minDiscountRate" :min="0.1" :max="10" :precision="1" :step="0.5" controls-position="right" />
+            <span class="muted" style="margin-left:8px;">折（10 = 不打折）</span>
+          </el-form-item>
+          <el-form-item label="抹零上限">
+            <el-input-number v-model="form.sale.maxRoundOff" :min="0" :precision="2" :step="0.5" controls-position="right" />
+            <span class="muted" style="margin-left:8px;">元</span>
+            <div class="form-tip">抹零抹的是角分零头，抹到「元」为止最多也不超过 ¥0.99，所以 1 元即「只允许抹零头」。</div>
+          </el-form-item>
+          <div class="form-tip" style="margin-bottom:14px;">
+            以上三项是<b>不需要授权就能给的常规让利额度</b>；超出的让利不会被拒，但要店主授权
+            —— 当前登录账号须为店主账号并再次输入其登录密码，超限尝试与授权动作都会记入操作日志。
+          </div>
           <el-form-item><el-button type="primary" @click="save">保存</el-button></el-form-item>
         </el-form>
       </div>
@@ -188,7 +206,7 @@ function pageSetup(deps) {
   const tab = ref('shop');
   const form = ref({
     shop: { name:'', phone:'', address:'', logo:'' },
-    sale: { allowCredit: true, defaultPayMethod: '现金' },
+    sale: { allowCredit: true, defaultPayMethod: '现金', maxOrderDiscount: 50, minDiscountRate: 9, maxRoundOff: 1 },
     receipt: { header:'', footer:'', autoPrint: false },
     stock: { warningThreshold: 1, expiryDays: 30 },
     units: [], specs: [], payMethods: [], categoryDict: {},
@@ -227,7 +245,12 @@ function pageSetup(deps) {
   }
 
   async function load() {
-    try { form.value = await api.get('/settings'); } catch(e){}
+    try {
+      form.value = await api.get('/settings');
+      // 让利限额是后加的键：老库里的 sale 组还是 {allowCredit, defaultPayMethod} 两个键，
+      // 直接回放会让三个输入框空着（看着像坏了）。服务端已按缺项回退默认值，这里补齐只为显示。
+      form.value.sale = Object.assign({ maxOrderDiscount: 50, minDiscountRate: 9, maxRoundOff: 1 }, form.value.sale || {});
+    } catch(e){}
   }
   async function save() {
     // 把当前分类的专属编辑合并回 categoryDict 再整体保存

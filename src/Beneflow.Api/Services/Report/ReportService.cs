@@ -213,35 +213,90 @@ public class ReportService : IReportService
         };
     }
 
-    /// <summary>供应商对账单：时间范围内的进货单列表 + 合计</summary>
+    /// <summary>
+    /// 供应商对账单：时间范围内的**进货单 + 采购退货单**流水，合计给「净应付」。
+    ///
+    /// 口径（2026-09-22 定稿）：对账单回答的是「我欠这家供应商多少钱」，所以两个方向都要进 ——
+    /// 进货让欠款增加（金额记**正**），采购退货让欠款减少（金额记**负**），
+    /// `netPayable = purchaseTotal − returnTotal` 就是净应付。
+    /// 之前只列进货单，退回去的货等于白欠着，账对不上（见项目笔记的已知缺口）。
+    ///
+    /// 金额带符号还有一个用处：**「按顺序求和 ＝ 合计」这条恒等式成立** ——
+    /// 屏幕上/导出的每一行加起来就是最后那个净应付，对账单最该一眼看懂的就是这件事。
+    /// 已作废的进货单与退货单一律剔除（作废单不回退任何欠款，也不该出现在对账里）。
+    /// </summary>
     public async Task<object> SupplierStatementAsync(int supplierId, string? dateFrom, string? dateTo)
     {
-        var q =
+        var purchaseQ =
             from po in _db.PurchaseOrders.AsNoTracking()
             join sup in _db.Suppliers on po.SupplierId equals sup.Id
-            where po.SupplierId == supplierId
-            orderby po.CreatedAt descending
-            select new { po, sup.Name };
+            where po.SupplierId == supplierId && !po.IsVoided
+            select new { po.OrderNo, sup.Name, po.TotalQty, po.TotalAmount, po.CreatedAt };
+
+        var returnQ =
+            from pr in _db.PurchaseReturns.AsNoTracking()
+            join sup in _db.Suppliers on pr.SupplierId equals sup.Id
+            where pr.SupplierId == supplierId && !pr.IsVoided
+            select new { pr.Id, pr.OrderNo, sup.Name, pr.RefundAmount, pr.CreatedAt };
 
         if (!string.IsNullOrEmpty(dateFrom) && DateTime.TryParse(dateFrom, out var df))
-            q = q.Where(x => x.po.CreatedAt >= df);
-        if (!string.IsNullOrEmpty(dateTo) && DateTime.TryParse(dateTo, out var dt))
-            q = q.Where(x => x.po.CreatedAt < dt.AddDays(1));
-
-        var rows = await q.Select(x => new
         {
-            id = x.po.Id, orderNo = x.po.OrderNo, supplierName = x.Name,
-            totalQty = x.po.TotalQty, totalAmount = x.po.TotalAmount,
-            createdAt = x.po.CreatedAt.ToString("yyyy-MM-dd HH:mm"),
-        }).ToListAsync();
+            purchaseQ = purchaseQ.Where(x => x.CreatedAt >= df);
+            returnQ = returnQ.Where(x => x.CreatedAt >= df);
+        }
+        if (!string.IsNullOrEmpty(dateTo) && DateTime.TryParse(dateTo, out var dt))
+        {
+            var end = dt.AddDays(1);
+            purchaseQ = purchaseQ.Where(x => x.CreatedAt < end);
+            returnQ = returnQ.Where(x => x.CreatedAt < end);
+        }
+
+        var purchases = await purchaseQ.ToListAsync();
+        var returns = await returnQ.ToListAsync();
+
+        // 退货数量没有冗余列，按单据聚合明细求得（单独一次查询，避免在投影里写相关子查询 ——
+        // InMemory 提供程序对相关子查询的支持不稳，写进去单测就会假失败）
+        var returnIds = returns.Select(r => r.Id).ToList();
+        var returnQty = returnIds.Count == 0
+            ? new Dictionary<int, decimal>()
+            : await _db.PurchaseReturnDetails.AsNoTracking()
+                .Where(d => returnIds.Contains(d.ReturnId))
+                .GroupBy(d => d.ReturnId)
+                .Select(g => new { ReturnId = g.Key, Qty = g.Sum(x => x.Qty) })
+                .ToDictionaryAsync(x => x.ReturnId, x => x.Qty);
+
+        var ledger = purchases
+            .Select(p => new LedgerLine("进货", p.OrderNo, p.Name, p.TotalQty, p.TotalAmount, p.CreatedAt))
+            .Concat(returns.Select(r => new LedgerLine("退货", r.OrderNo, r.Name,
+                returnQty.TryGetValue(r.Id, out var q) ? q : 0m, -r.RefundAmount, r.CreatedAt)))
+            .OrderByDescending(x => x.At).ThenByDescending(x => x.OrderNo)
+            .ToList();
+
+        var items = ledger.Select(x => (object)new
+        {
+            type = x.Type, orderNo = x.OrderNo, supplierName = x.SupplierName,
+            qty = x.Qty, amount = Math.Round(x.Amount, 2),
+            createdAt = x.At.ToString("yyyy-MM-dd HH:mm"),
+        }).ToList();
+
+        var purchaseTotal = Math.Round(purchases.Sum(p => p.TotalAmount), 2);
+        var returnTotal = Math.Round(returns.Sum(r => r.RefundAmount), 2);
 
         return new
         {
-            items = rows,
-            count = rows.Count,
-            total = Math.Round(rows.Sum(r => r.totalAmount), 2),
+            items,
+            count = items.Count,               // 流水总条数（进货 + 退货）
+            purchaseCount = purchases.Count,
+            returnCount = returns.Count,
+            purchaseTotal,                     // 进货合计（应付增加）
+            returnTotal,                       // 退货合计（应付减少，正数表示「退回去的货值多少」）
+            netPayable = Math.Round(purchaseTotal - returnTotal, 2),   // 净应付
         };
     }
+
+    /// <summary>对账单流水的一行（进货金额记正、退货记负，合并后按时间倒序排）</summary>
+    private readonly record struct LedgerLine(string Type, string OrderNo, string SupplierName,
+        decimal Qty, decimal Amount, DateTime At);
 
     /// <summary>赊账汇总：按微信号聚合 + 时间段统计</summary>
     public async Task<object> CreditSummaryAsync(string? dateFrom, string? dateTo)

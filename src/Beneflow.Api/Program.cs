@@ -246,6 +246,38 @@ if (args.Contains("--migrate"))
     }
 }
 
+// ---------- 启动自检：库结构是否落后于代码 ----------
+// 加了迁移类却没执行 database update 时，进程照常起来、页面照常能点，只有查询到新列的接口报 500
+// （Invalid column name），现象离原因很远。这里在启动时主动查一次待应用迁移，把它顶到日志最前面。
+//
+// 刻意排在「种子数据」之前：库结构不对时播种多半也会失败，先给出根因，后面的报错才不误导。
+//
+// 默认只记 Error、不阻断启动 —— 只有涉及新列的页面坏掉，其余功能仍然可用，
+// 拒绝启动会把「局部故障」放大成「整个系统不可用」。把 Database:FailOnPendingMigrations
+// 设为 true 可切换成严格模式（拒绝启动），适合不允许带病运行的场合。
+using (var guardScope = app.Services.CreateScope())
+{
+    var check = await MigrationGuard.InspectAsync(
+        guardScope.ServiceProvider.GetRequiredService<AppDbContext>());
+
+    if (check.State == MigrationGuard.MigrationState.Pending)
+    {
+        var msg = MigrationGuard.BuildPendingMessage(check.Pending);
+        if (builder.Configuration.GetValue<bool>("Database:FailOnPendingMigrations"))
+        {
+            Log.Fatal("{MigrationMessage}", msg);
+            Log.CloseAndFlush();
+            return 1;
+        }
+        Log.Error("{MigrationMessage}", msg);
+    }
+    else if (check.State == MigrationGuard.MigrationState.Unavailable)
+    {
+        // 连不上库 / 提供程序不支持迁移：只提示自检没结论，具体原因交给下面的种子数据初始化报。
+        Log.Warning("数据库迁移自检未获得结论（跳过）：{Reason}", check.Error);
+    }
+}
+
 // ---------- 首次运行种子数据（幂等：已有用户则跳过） ----------
 using (var scope = app.Services.CreateScope())
 {

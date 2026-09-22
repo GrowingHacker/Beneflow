@@ -42,13 +42,13 @@ public class AuthService : IAuthService
         return codes.Where(c => !string.IsNullOrEmpty(c)).ToList();
     }
 
-    public async Task<ApiResult<object>> LoginAsync(string username, string password, string? ip)
+    public async Task<ApiResult<LoginResultDto>> LoginAsync(string username, string password, string? ip)
     {
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Username == username && !u.IsDeleted);
         if (user == null)
         {
             await WriteLoginLog(null, username, false, "用户不存在", ip);
-            return ApiResult<object>.Fail("用户名或密码错误");
+            return ApiResult<LoginResultDto>.Fail("用户名或密码错误");
         }
 
         if (!user.Status)
@@ -56,12 +56,12 @@ public class AuthService : IAuthService
             await WriteLoginLog(user.Id, username, false, "账号已禁用", ip);
             WriteOpLog(user.Id, user.Username, ip, "认证管理", "登录失败", "账号已禁用");
             await _db.SaveChangesAsync();
-            return ApiResult<object>.Fail("账号已被禁用，请联系店主");
+            return ApiResult<LoginResultDto>.Fail("账号已被禁用，请联系店主");
         }
 
         if (user.LockedUntil.HasValue && user.LockedUntil.Value > DateTime.Now)
         {
-            return ApiResult<object>.Fail($"密码错误次数过多，账号已锁定至 {user.LockedUntil:HH:mm}");
+            return ApiResult<LoginResultDto>.Fail($"密码错误次数过多，账号已锁定至 {user.LockedUntil:HH:mm}");
         }
 
         if (!PasswordHasher.Verify(password, user.Salt, user.PasswordHash))
@@ -78,7 +78,7 @@ public class AuthService : IAuthService
             await WriteLoginLog(user.Id, username, false, msg, ip);
             WriteOpLog(user.Id, user.Username, ip, "认证管理", "登录失败", msg);
             await _db.SaveChangesAsync();
-            return ApiResult<object>.Fail(msg);
+            return ApiResult<LoginResultDto>.Fail(msg);
         }
 
         user.FailedCount = 0;
@@ -114,16 +114,16 @@ public class AuthService : IAuthService
                 key, Microsoft.IdentityModel.Tokens.SecurityAlgorithms.HmacSha256));
 
         var permissions = await GetPermissionCodesAsync(user.Id);
-        var result = ApiResult<object>.Ok(new
+        var result = ApiResult<LoginResultDto>.Ok(new LoginResultDto
         {
-            token = new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler().WriteToken(token),
-            user = new
+            Token = new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler().WriteToken(token),
+            User = new LoginUserDto
             {
-                id = user.Id,
-                name = user.Name,
-                username = user.Username,
-                role = role?.Name ?? "",
-                permissions,
+                Id = user.Id,
+                Name = user.Name,
+                Username = user.Username,
+                Role = role?.Name ?? "",
+                Permissions = permissions,
             },
         });
         return result;

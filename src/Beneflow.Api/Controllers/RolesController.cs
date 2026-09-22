@@ -12,8 +12,8 @@ public class RolesController : BaseApiController
 
     /// <summary>角色列表</summary>
     [HttpGet]
-    public async Task<ApiResult<List<object>>> List() =>
-        ApiResult<List<object>>.Ok(await _svc.ListAsync());
+    public async Task<ApiResult<List<RoleListItemDto>>> List() =>
+        ApiResult<List<RoleListItemDto>>.Ok(await _svc.ListAsync());
 
     /// <summary>查询角色已分配的菜单 ID 集合（权限勾选回显用）</summary>
     [HttpGet("{id:int}/menus")]
@@ -22,10 +22,10 @@ public class RolesController : BaseApiController
 
     /// <summary>新增角色；名称和编码必填</summary>
     [HttpPost]
-    public async Task<ApiResult<object>> Create([FromBody] RoleBody b)
+    public async Task<ApiResult<IdResultDto>> Create([FromBody] RoleBody b)
     {
         if (string.IsNullOrWhiteSpace(b.Name) || string.IsNullOrWhiteSpace(b.Code))
-            return ApiResult<object>.Fail("角色名称和编码不能为空");
+            return ApiResult<IdResultDto>.Fail("角色名称和编码不能为空");
         return await _svc.CreateAsync(b.Name.Trim(), b.Code.Trim(), b.Desc);
     }
 

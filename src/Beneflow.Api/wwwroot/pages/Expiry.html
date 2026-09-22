@@ -1,7 +1,7 @@
 <div>
   <div class="page-card">
     <div class="toolbar">
-      <el-radio-group v-model="filter" @change="load">
+      <el-radio-group v-model="filter" @change="onFilterChange">
         <el-radio-button label="7">7 天内</el-radio-button>
         <el-radio-button label="30">30 天内</el-radio-button>
         <el-radio-button label="expired">已过期</el-radio-button>
@@ -25,6 +25,11 @@
         </el-table-column>
       </el-table>
     </div>
+    <div class="pagination-wrap">
+      <el-pagination
+        v-model:current-page="page" v-model:page-size="pageSize" :total="total"
+        :page-sizes="[10,20,50]" layout="total, sizes, prev, pager, next" @size-change="load" @current-change="load" />
+    </div>
   </div>
 </div>
 
@@ -34,30 +39,51 @@ function pageSetup(deps) {
   const { api, common, toast } = deps;
   const list = ref([]); const loading = ref(false);
   const filter = ref('30');
+  const page = ref(1); const pageSize = ref(20); const total = ref(0);
 
-  function expireClass(row) { return row.daysLeft < 0 ? 'danger-text' : row.daysLeft < 7 ? 'danger-text' : 'warn-text'; }
+  // daysLeft < 0（已过期）与 < 7（7 天内，含已过期）都是红色告警，同一个判据
+  function expireClass(row) { return row.daysLeft < 7 ? 'danger-text' : 'warn-text'; }
 
   async function load() {
     loading.value = true;
-    try { const res = await api.get('/stocks/expiry', { params: { tag: filter.value, pageSize: 500 } }); list.value = res.list||[]; } catch(e){}
+    try {
+      const res = await api.get('/stocks/expiry', { params: { tag: filter.value, page: page.value, pageSize: pageSize.value } });
+      list.value = res.list||[]; total.value = res.total||0;
+      // 标记已处理后，若本页正好被清空（最后一页只剩一条），回退一页再取，别停在空表上
+      if (!list.value.length && page.value > 1) { page.value -= 1; await load(); }
+    } catch(e){}
     finally { loading.value = false; }
   }
+
+  // 切筛选必须回到第 1 页：新筛选的行数可能装不满当前页，否则看到的是一张空表
+  function onFilterChange() { page.value = 1; load(); }
+
   async function markHandled(row) {
     try {
       await api.post('/stocks/expiry/mark-processed', [row.id]);
       toast('已标记「'+row.name+'」为已处理','success');
-      load();
+      load();   // 留在原页刷新，跳页会让用户失去位置感
     } catch(e){}
   }
-  function exportList() {
-    if (!list.value.length) { toast('无数据','warning'); return; }
+
+  // CSV 转义：值里的双引号要写成两个，否则商品名含 " 会把一列撕成两列
+  function csvCell(v) { return '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"'; }
+
+  async function exportList() {
+    // 导出**当前筛选的全部**数据，而不是当前页：分页只是为了看，导出要完整。
+    // 后端 pageSize 上限 500，超过就如实提示，不做静默截断。
+    let res;
+    try { res = await api.get('/stocks/expiry', { params: { tag: filter.value, page: 1, pageSize: 500 } }); } catch(e){ return; }
+    const rows = res.list || [];
+    if (!rows.length) { toast('无数据','warning'); return; }
     const header = ['条码','名称','库存','有效期至','剩余天数'];
     const lines = [header.join(',')];
-    list.value.forEach(r => lines.push([r.barcode,r.name,r.quantity,r.expireDate,r.daysLeft].map(v=>'"'+(v==null?'':v)+'"').join(',')));
+    rows.forEach(r => lines.push([r.barcode, r.name, r.quantity, r.expireDate, r.daysLeft].map(csvCell).join(',')));
     common.downloadBlob(new Blob(['\ufeff'+lines.join('\n')], {type:'text/csv;charset=utf-8'}), '临期商品.csv');
-    toast('已导出','success');
+    if ((res.total||0) > rows.length) toast('已导出前 '+rows.length+' 条（单次上限 500 条）','warning');
+    else toast('已导出','success');
   }
   onMounted(load);
-  return { list, loading, filter, expireClass, markHandled, exportList, common, toast };
+  return { list, loading, filter, page, pageSize, total, expireClass, load, onFilterChange, markHandled, exportList, common, toast };
 }
 </script>

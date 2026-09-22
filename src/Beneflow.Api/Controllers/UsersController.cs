@@ -12,13 +12,13 @@ public class UsersController : BaseApiController
 
     /// <summary>用户列表（按关键词搜索，分页）</summary>
     [HttpGet]
-    public async Task<ApiResult<PagedResult<object>>> List(
+    public async Task<ApiResult<PagedResult<UserListItemDto>>> List(
         [FromQuery] string? keyword, [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
-        => ApiResult<PagedResult<object>>.Ok(await _svc.ListAsync(keyword, page, pageSize));
+        => ApiResult<PagedResult<UserListItemDto>>.Ok(await _svc.ListAsync(keyword, page, pageSize));
 
     /// <summary>新增用户；需指定角色</summary>
     [HttpPost]
-    public Task<ApiResult<object>> Create([FromBody] UserCreateDto dto) => _svc.CreateAsync(dto);
+    public Task<ApiResult<IdResultDto>> Create([FromBody] UserCreateDto dto) => _svc.CreateAsync(dto);
 
     /// <summary>编辑用户；body 可带 password 重置密码（仅店主）</summary>
     [HttpPut("{id:int}")]

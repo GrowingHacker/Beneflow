@@ -59,6 +59,20 @@ public class SaleItemDto
     public decimal SubTotal { get; set; }
 }
 
+/// <summary>
+/// 混合支付的一行：一种支付方式 + 金额。
+/// 除「赊账」外都是该方式实际收到的钱；「赊账」行的金额是**挂账额**（没收到的那部分）。
+/// </summary>
+public class SalePaymentDto
+{
+    /// <summary>支付方式：现金/微信/支付宝/赊账</summary>
+    [StringLength(20, ErrorMessage = "支付方式长度不能超过 20 位")]
+    public string PayMethod { get; set; } = "现金";
+
+    /// <summary>该方式金额（正数；为 0 的行会被忽略）</summary>
+    public decimal Amount { get; set; }
+}
+
 /// <summary>创建销售单请求（收银台结算）</summary>
 public class CreateSaleDto
 {
@@ -84,6 +98,13 @@ public class CreateSaleDto
 
     /// <summary>收款额（递钞额）：现金单顾客实际交出的钱，用于算找零；非现金传 0</summary>
     public decimal CashAmount { get; set; }
+
+    /// <summary>
+    /// 混合支付明细：**非空即走混合结算**，此时 <see cref="PayMethod"/> / <see cref="CashAmount"/> 一律不采信
+    /// （收款方式与各方式金额都由后端按本列表重算）；为空则走原来的单项支付逻辑。
+    /// 金额合计不足应收部分自动挂账，故「付一部分 + 差额挂账」也是走这里。
+    /// </summary>
+    public List<SalePaymentDto>? Payments { get; set; }
     /// <summary>找零金额（前端展示值，后端重算）</summary>
     public decimal ChangeAmount { get; set; }
     /// <summary>是否赊账</summary>
@@ -99,6 +120,14 @@ public class CreateSaleDto
 
     /// <summary>备注</summary>
     public string? Remark { get; set; }
+
+    /// <summary>
+    /// 超额让利的店主授权密码。**只在让利超出系统设置里的限额时才需要**，常规结算不传。
+    /// 服务端校验「当前登录账号持 owner 角色 + 该账号自己的密码」，与前端传什么无关 ——
+    /// 前端那个输入框只是让收银员能在店里当场找店主要密码，拦不住手搓请求。
+    /// </summary>
+    [StringLength(100, ErrorMessage = "授权密码长度不能超过 100 位")]
+    public string? DiscountAuthPassword { get; set; }
 }
 
 public class PurchaseDetailDto

@@ -99,8 +99,20 @@
     <el-form :model="form" label-width="90px">
       <el-row :gutter="12">
         <el-col :span="24"><div class="form-section-title">基本信息</div></el-col>
-        <el-col :span="12"><el-form-item label="条码"><el-input v-model="form.barcode" :disabled="!!form.id" placeholder="留空自动生成店内码" /></el-form-item></el-col>
+        <el-col :span="12"><el-form-item label="条码">
+          <!-- 建档才是「每个商品都是新的」的场景（进货录入时商品多已建档），所以联网反查放在这一页。
+               留空表示由系统生成店内码，此时不发请求。 -->
+          <el-input ref="barcodeRef" v-model="form.barcode" :disabled="!!form.id"
+                    placeholder="留空自动生成店内码" @blur="lookupBarcode" @keyup.enter="lookupBarcode">
+            <template #suffix><el-icon v-if="bcLooking" class="is-loading"><Loading /></el-icon></template>
+          </el-input>
+        </el-form-item></el-col>
         <el-col :span="12"><el-form-item label="名称"><el-input v-model="form.name" /></el-form-item></el-col>
+        <!-- 提示单独占一行：塞进条码那一格里时，格内可用宽度只有 208px，40 字提示会折成 3 行、该行高 90px
+             （其他行 32px）。左缩进 90px 是量出来的，正好与输入框左边界对齐（= label-width） -->
+        <el-col :span="24" v-if="bcTip">
+          <div class="bc-tip" :class="bcTipOk ? 'success-text' : 'muted'">{{ bcTip }}</div>
+        </el-col>
         <el-col :span="12"><el-form-item label="分类">
           <el-select v-model="form.categoryId" placeholder="选择分类，可输入新建" filterable allow-create default-first-option style="width:100%;">
             <el-option v-for="c in cats" :key="c.id" :label="c.name" :value="c.id"></el-option>
@@ -162,7 +174,11 @@
     </el-form>
     <template #footer>
       <el-button @click="dialog=false">取消</el-button>
-      <el-button type="primary" @click="save">保存</el-button>
+      <!-- 连续建档：保存后不关弹窗、清表单、回焦条码框，扫码枪可以直接接着打下一件。
+           必须显式传参 —— 写成 @click="save" 会把 click 事件对象当成 keepOpen（真值），
+           于是普通「保存」也不会关弹窗。 -->
+      <el-button @click="save(true)">保存并继续新增</el-button>
+      <el-button type="primary" @click="save(false)">保存</el-button>
     </template>
   </el-dialog>
 
@@ -268,6 +284,13 @@ function pageSetup(deps) {
   const dialog = ref(false);
   const form = ref({});
 
+  // ---- 条码联网反查（建档用）----
+  const barcodeRef = ref(null);     // 「保存并继续新增」后回焦到这里，扫码枪可直接打下一件
+  const bcTip = ref('');            // 提示文字；空字符串 = 不显示那一行
+  const bcTipOk = ref(false);       // 命中回填 → 成功色，未命中 → 灰字
+  const bcLooking = ref(false);     // 查询中，suffix 转圈
+  let lastLookupCode = '';          // 去重：回车后紧跟失焦会对同一条码触发两次
+
   const cats = ref([]);
   const units = ref([]);
   const specs = ref([]);
@@ -342,6 +365,7 @@ function pageSetup(deps) {
   function openCreate() {
     suppressCatWatch = true;
     form.value = emptyForm(); dialog.value = true;
+    lastLookupCode = ''; bcTip.value = ''; bcTipOk.value = false;
     nextTick(function () { suppressCatWatch = false; });
   }
   function openEdit(row) {
@@ -349,10 +373,79 @@ function pageSetup(deps) {
     // 与空表单合并：保证促销字段在缺值时也有初值（日期控件不接受 undefined）
     form.value = Object.assign(emptyForm(), JSON.parse(JSON.stringify(row)));
     dialog.value = true;
+    lastLookupCode = ''; bcTip.value = ''; bcTipOk.value = false;
     nextTick(function () { suppressCatWatch = false; });
   }
 
-  async function save() {
+  // 名称品牌合并：数据源的 name 常常不带品牌，而 brand 里可能是一串候选品牌。
+  // 名称里已经有品牌就不再拼接（与进货页同一套规则，两页数据源相同）。
+  function mergeBrand(name, brand) {
+    const displayName = (name || '').trim();
+    const brandRaw = (brand || '').trim();
+    if (!brandRaw || !displayName) return displayName;
+    const brandParts = brandRaw.split(/[,，、\/;；]/).map(function (s) { return s.trim(); }).filter(Boolean);
+    const mainBrand = brandParts[0];
+    const nameHead = displayName.split(/[\s\-_,，\/]/).filter(Boolean)[0] || '';
+    const overlap = brandParts.some(function (b) {
+      return (b && nameHead && b.toLowerCase() === nameHead.toLowerCase())
+        || (b && displayName.toLowerCase().indexOf(b.toLowerCase()) === 0);
+    });
+    return (!overlap && mainBrand) ? mainBrand + ' ' + displayName : displayName;
+  }
+
+  // 联网反查条码 → **只填空缺字段**（已填的一律不覆盖，人工输入优先）
+  async function lookupBarcode() {
+    const code = (form.value.barcode || '').trim();
+    if (form.value.id) return;                            // 编辑模式不反查（条码在那时禁改）
+    if (code.length < 6) { bcTip.value = ''; return; }     // 店内码/散称临时码：后端对 < 6 位直接 Fail，别白跑一趟
+    if (code === lastLookupCode) return;                   // 同一条码只查一次（回车 + 失焦会触发两次）
+    lastLookupCode = code;
+
+    bcLooking.value = true;
+    let info = null;
+    try { info = await api.get('/barcode/lookup/' + encodeURIComponent(code), { silent: true }); }
+    catch (e) { info = null; }                             // 查不到是常态（含上游超时），别弹全局错误条
+    finally { bcLooking.value = false; }
+
+    if (!info) { bcTipOk.value = false; bcTip.value = '未查到该条码，请手动填写'; return; }
+
+    const filled = [];
+
+    // 分类放在最前面写，并等分类联动跑完再填其余字段。
+    // 原因：watch 盯的是 categoryId，分类一变它会按新分类的字典把「不在范围内」的单位/规格清空。
+    // 若先填单位/规格再写分类，这次清空就会把它们连坐掉（实测：单位与规格双双变空）。
+    // 用「置标志位 + nextTick 复位」去挡是脆的——能不能挡住取决于 watch 任务与复位回调谁先跑。
+    // 改成先写分类、await 让联动先清一次（此刻这两个字段本来就是空的，清无可清），
+    // 之后再填就不会被冲掉，与调度顺序无关。
+    const netCat = String(info.category || '').trim();
+    let catFilled = false;
+    if (!form.value.categoryId && netCat) {
+      const hit = (cats.value || []).find(function (c) { return c.name === netCat; });
+      // 只认已有分类，匹配不到就**不填**：数据源给的是境外分类体系（实测出现过「水」这种粒度），
+      // 当成新分类名建进去等于让别家的分类体系替店家决定货架结构 —— 那件事只能由人来定。
+      if (hit) { form.value.categoryId = hit.id; await nextTick(); catFilled = true; }
+    }
+    if (catFilled) filled.push('分类');
+
+    const name = mergeBrand(info.name, info.brand);
+    if (!form.value.name && name) { form.value.name = name; filled.push('名称'); }
+    if (!form.value.spec && info.spec) { form.value.spec = info.spec; filled.push('规格'); }
+    // 单位只在不填、或仍是默认「个」时覆盖
+    if ((!form.value.unit || form.value.unit === '个') && info.unit) { form.value.unit = info.unit; filled.push('单位'); }
+    if (!(Number(form.value.salePrice) > 0) && info.suggestedSalePrice != null && info.suggestedSalePrice !== '') {
+      form.value.salePrice = Number(info.suggestedSalePrice); filled.push('售价');
+    }
+    if (!(Number(form.value.costPrice) > 0) && info.suggestedCostPrice != null && info.suggestedCostPrice !== '') {
+      form.value.costPrice = Number(info.suggestedCostPrice); filled.push('成本价');
+    }
+
+    bcTipOk.value = true;
+    bcTip.value = filled.length
+      ? '已联网填充：' + filled.join('、') + '（来源：' + (info.source || '网络公开数据源') + '，请核对）'
+      : '该条码已联网查到，但可填字段都已填写，未做覆盖';
+  }
+
+  async function save(keepOpen) {
     const f = form.value;
     if (!f.name) { toast('请填写名称', 'warning'); return; }
     if (typeof f.categoryId === 'string') { f.categoryName = f.categoryId.trim(); f.categoryId = 0; }
@@ -389,7 +482,21 @@ function pageSetup(deps) {
         try { await api.put('/settings', payload); } catch (e) {}
       }
       toast('保存成功', 'success');
-      dialog.value = false;
+      if (keepOpen) {
+        // 连续建档：清表单但**保留分类**（批量录入常是同一类），并回焦条码框——
+        // 扫码枪可以直接打下一件，不必再点一次输入框。
+        const keepCat = f.categoryId;
+        suppressCatWatch = true;
+        form.value = emptyForm();
+        form.value.categoryId = keepCat;
+        lastLookupCode = ''; bcTip.value = ''; bcTipOk.value = false;
+        nextTick(function () {
+          suppressCatWatch = false;
+          if (barcodeRef.value) barcodeRef.value.focus();
+        });
+      } else {
+        dialog.value = false;
+      }
       load();
     } catch (e) {}
   }
@@ -554,6 +661,7 @@ function pageSetup(deps) {
   onMounted(function () { load(); loadCats(); loadDicts(); });
   return { list, loading, keyword, page, pageSize, total, dialog, form, common, cats, unitOptions, specOptions,
     load, search, openCreate, openEdit, save, toggleStatus, remove, expireTag, exportCsv, exportExcel, onWeightedChange,
+    barcodeRef, bcTip, bcTipOk, bcLooking, lookupBarcode,
     importing, importPreviewDialog, importRows, importFields, importHeaders, importMapping, importSheetName,
     importSummary, importNotice, duplicatePolicy, importSubmitting, importFailed, importReadyCount,
     importRowTag, reparse, downloadTemplate, importExcel, confirmImport,

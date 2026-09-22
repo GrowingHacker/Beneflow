@@ -19,4 +19,8 @@ public class PurchaseReturnsController : BaseApiController
     /// <summary>创建采购退货单：回退库存并写库存流水</summary>
     [HttpPost]
     public Task<ApiResult<object>> Create([FromBody] CreatePurchaseReturnDto dto) => _svc.CreateReturnAsync(dto);
+
+    /// <summary>作废采购退货单：回补库存并标记作废（已作废的不重复处理）</summary>
+    [HttpPost("{id:int}/void")]
+    public Task<ApiResult> Void(int id) => _svc.VoidReturnAsync(id);
 }

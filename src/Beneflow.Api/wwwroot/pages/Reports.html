@@ -78,12 +78,33 @@
           <el-button @click="exportStatement">导出 CSV</el-button>
           <el-button type="success" @click="exportExcelStatement">导出 Excel</el-button>
         </div>
+        <!-- 进货与退货合成一条时间轴：进货记正、退货记负。金额带符号的唯一目的，是让
+             「逐行求和 ＝ 净应付」这条恒等式成立 —— 否则退货行的数字是正的，肉眼看不出该减。 -->
         <div class="table-wrap">
           <el-table :data="statement?.items || []" border size="small">
-            <el-table-column label="单号" prop="orderNo" width="160" /><el-table-column label="供应商" prop="supplierName" /><el-table-column label="数量" prop="totalQty" width="90" /><el-table-column label="金额" width="120"><template #default="{ row }">{{ common.money(row.totalAmount) }}</template></el-table-column><el-table-column label="日期" prop="createdAt" width="160" />
+            <el-table-column label="类型" width="80" align="center">
+              <template #default="{ row }">
+                <el-tag v-if="row.type === '退货'" type="warning" size="small">退货</el-tag>
+                <el-tag v-else type="success" size="small">进货</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="单号" prop="orderNo" width="160" />
+            <el-table-column label="供应商" prop="supplierName" />
+            <el-table-column label="数量" prop="qty" width="90" />
+            <el-table-column label="金额" width="120">
+              <template #header><span title="进货记正、退货记负；逐行求和即净应付">金额</span></template>
+              <template #default="{ row }">{{ common.money(row.amount) }}</template>
+            </el-table-column>
+            <el-table-column label="日期" prop="createdAt" width="160" />
           </el-table>
         </div>
-        <div style="margin-top:10px;text-align:right;">对账合计 <b class="cart-total">{{ common.money(statement?.total) }}</b></div>
+        <div style="margin-top:10px;text-align:right;">
+          进货合计 <b>{{ common.money(statement?.purchaseTotal) }}</b>
+          <span style="margin:0 10px;">−</span>
+          退货合计 <b>{{ common.money(statement?.returnTotal) }}</b>
+          <span style="margin:0 10px;">=</span>
+          净应付 <b class="cart-total">{{ common.money(statement?.netPayable) }}</b>
+        </div>
       </div>
     </el-tab-pane>
 

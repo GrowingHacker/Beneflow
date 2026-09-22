@@ -26,6 +26,28 @@ public class ReportServiceTests : TestBase
         return o;
     }
 
+    /// <summary>直接落库一张采购退货单（含一行明细，数量供对账单的「数量」列使用）</summary>
+    private PurchaseReturn SeedPurchaseReturn(decimal amount, decimal qty, DateTime at, int? supplierId = null)
+    {
+        var r = new PurchaseReturn
+        {
+            OrderNo = $"PR{at:yyyyMMdd}{Db.PurchaseReturns.Count() + 1:D3}",
+            SupplierId = supplierId ?? SupplierId,
+            RefundAmount = amount,
+            CreatedBy = UserId,
+            CreatedAt = at,
+        };
+        Db.PurchaseReturns.Add(r);
+        Db.SaveChanges();
+        Db.PurchaseReturnDetails.Add(new PurchaseReturnDetail
+        {
+            ReturnId = r.Id, ProductId = ProductAId, Qty = qty,
+            CostPrice = qty == 0 ? 0 : Math.Round(amount / qty, 4), SubTotal = amount,
+        });
+        Db.SaveChanges();
+        return r;
+    }
+
     /// <summary>直接落库一条赊账记录</summary>
     private CreditSale SeedCredit(string wechat, decimal credit, decimal paid, DateTime at, bool settled = false)
     {
@@ -301,8 +323,61 @@ public class ReportServiceTests : TestBase
         var items = P<IEnumerable<object>>(r, "items")!.ToList();
 
         Assert.Equal(2, P<int>(r, "count"));
-        Assert.Equal(1500m, P<decimal>(r, "total"));
+        Assert.Equal(1500m, P<decimal>(r, "purchaseTotal"));
+        Assert.Equal(0m, P<decimal>(r, "returnTotal"));
+        Assert.Equal(1500m, P<decimal>(r, "netPayable"));   // 没有退货时，净应付＝进货合计
         Assert.Equal("测试供应商", P<string>(items[0], "supplierName"));   // 按时间倒序
+    }
+
+    [Fact]
+    public async Task SupplierStatementAsync_纳入采购退货_合计为净应付()
+    {
+        SeedPurchase(1000m, 100, Today.AddHours(9));
+        SeedPurchaseReturn(300m, 30, Today.AddHours(15));
+
+        var r = await ReportSvc.SupplierStatementAsync(SupplierId, null, null);
+        var items = P<IEnumerable<object>>(r, "items")!.ToList();
+
+        Assert.Equal(2, P<int>(r, "count"));
+        Assert.Equal(1, P<int>(r, "purchaseCount"));
+        Assert.Equal(1, P<int>(r, "returnCount"));
+        Assert.Equal(1000m, P<decimal>(r, "purchaseTotal"));
+        Assert.Equal(300m, P<decimal>(r, "returnTotal"));
+        Assert.Equal(700m, P<decimal>(r, "netPayable"));
+
+        // 流水按时间倒序：最近那笔是退货。金额带符号（退货记负），
+        // 于是「逐行求和 ＝ 净应付」这条恒等式成立 —— 这是改成带符号的唯一目的。
+        Assert.Equal("退货", P<string>(items[0], "type"));
+        Assert.Equal(-300m, P<decimal>(items[0], "amount"));
+        Assert.Equal(30m, P<decimal>(items[0], "qty"));            // 退货数量取自明细
+        Assert.Equal(700m, items.Sum(i => P<decimal>(i, "amount")));
+    }
+
+    [Fact]
+    public async Task SupplierStatementAsync_已作废单据一律剔除()
+    {
+        var po = SeedPurchase(1000m, 100, Today.AddHours(9));
+        var pr = SeedPurchaseReturn(300m, 30, Today.AddHours(15));
+        po.IsVoided = true;
+        pr.IsVoided = true;
+        Db.SaveChanges();
+
+        var r = await ReportSvc.SupplierStatementAsync(SupplierId, null, null);
+
+        Assert.Equal(0, P<int>(r, "count"));
+        Assert.Equal(0m, P<decimal>(r, "netPayable"));
+    }
+
+    [Fact]
+    public async Task SupplierStatementAsync_退货也按日期范围过滤()
+    {
+        SeedPurchase(1000m, 100, Today.AddDays(-10));
+        SeedPurchaseReturn(300m, 30, Today);
+
+        var r = await ReportSvc.SupplierStatementAsync(SupplierId, Today.AddDays(-1).ToString("yyyy-MM-dd"), null);
+
+        Assert.Equal(1, P<int>(r, "count"));
+        Assert.Equal(-300m, P<decimal>(r, "netPayable"));   // 范围内只有退货 → 净应付为负（供应商欠我）
     }
 
     [Fact]
@@ -315,7 +390,7 @@ public class ReportServiceTests : TestBase
         var items = P<IEnumerable<object>>(r, "items")!.ToList();
 
         Assert.Single(items);
-        Assert.Equal(500m, P<decimal>(r, "total"));
+        Assert.Equal(500m, P<decimal>(r, "netPayable"));
     }
 
     [Fact]

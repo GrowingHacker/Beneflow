@@ -15,15 +15,21 @@ public class SaleServiceTests : TestBase
     private static SaleItemDto Item(int productId, decimal qty, decimal unitPrice = 0) =>
         new() { ProductId = productId, Qty = qty, UnitPrice = unitPrice };
 
+    /// <summary>
+    /// 收银结算并断言成功。让利超出系统设置限额时（整单优惠 > ¥50、低于 9 折、现金抹零 > ¥1）
+    /// 要传 <paramref name="authPwd"/> = 店主密码，否则会被让利风控拦下 ——
+    /// 本类里传了密码的用例，都是在模拟「店主授权放行的超额让利」，风控本身另见 SaleDiscountFenceTests。
+    /// </summary>
     private async Task<(int orderId, string orderNo)> CreateSaleAsync(decimal qty, string payMethod = "微信",
         decimal cash = 0, decimal discount = 0, bool isCredit = false, string? wechat = null, decimal unitPrice = 0,
-        decimal roundOff = 0, decimal? rate = null)
+        decimal roundOff = 0, decimal? rate = null, string? authPwd = null)
     {
         var r = await SaleSvc.CreateAsync(new CreateSaleDto
         {
             Items = new List<SaleItemDto> { Item(ProductAId, qty, unitPrice) },
             PayMethod = payMethod, CashAmount = cash, DiscountAmount = discount, DiscountRate = rate,
             RoundOffAmount = roundOff, IsCredit = isCredit, WechatId = wechat,
+            DiscountAuthPassword = authPwd,
         });
         Assert.Equal(0, r.Code);
         return (GetResultDataProp<int>(r.Data!, "id"), GetResultDataProp<string>(r.Data!, "orderNo")!);
@@ -147,7 +153,7 @@ public class SaleServiceTests : TestBase
     public async Task CreateAsync_DiscountClampedToTotal()
     {
         SetStock(ProductAId, 10);
-        var (orderId, _) = await CreateSaleAsync(2, "微信", discount: 100);  // 优惠超过总额
+        var (orderId, _) = await CreateSaleAsync(2, "微信", discount: 100, authPwd: "123456");  // 优惠超过总额
         var o = await Db.SaleOrders.AsNoTracking().FirstAsync(x => x.Id == orderId);
 
         Assert.Equal(20.00m, o.DiscountAmount);
@@ -357,8 +363,8 @@ public class SaleServiceTests : TestBase
     {
         SetStock(ProductAId, 10);   // 售价 10 → 总额 20
 
-        // 抹零 3：应收 17，顾客递 20，找零 3
-        var (orderId, _) = await CreateSaleAsync(2, "现金", cash: 20, roundOff: 3);
+        // 抹零 3：应收 17，顾客递 20，找零 3（抹零 3 已超 ¥1 上限，故要店主授权）
+        var (orderId, _) = await CreateSaleAsync(2, "现金", cash: 20, roundOff: 3, authPwd: "123456");
         var o = await Db.SaleOrders.AsNoTracking().FirstAsync(x => x.Id == orderId);
 
         Assert.Equal(20.00m, o.TotalAmount);      // 商品总额不受抹零影响
@@ -387,7 +393,7 @@ public class SaleServiceTests : TestBase
     {
         SetStock(ProductAId, 10);
 
-        var (orderId, _) = await CreateSaleAsync(2, "现金", cash: 0, roundOff: 999);
+        var (orderId, _) = await CreateSaleAsync(2, "现金", cash: 0, roundOff: 999, authPwd: "123456");
         var o = await Db.SaleOrders.AsNoTracking().FirstAsync(x => x.Id == orderId);
 
         Assert.Equal(20.00m, o.RoundOffAmount);   // 夹到折后金额
@@ -438,7 +444,7 @@ public class SaleServiceTests : TestBase
     {
         SetStock(ProductAId, 10);   // 售价 10 → 总额 20
 
-        var (orderId, _) = await CreateSaleAsync(2, "微信", rate: 8.8m);
+        var (orderId, _) = await CreateSaleAsync(2, "微信", rate: 8.8m, authPwd: "123456");
         var o = await Reload(orderId);
 
         Assert.Equal(20.00m, o.TotalAmount);
@@ -469,7 +475,7 @@ public class SaleServiceTests : TestBase
     {
         SetStock(ProductAId, 10);
 
-        var (orderId, _) = await CreateSaleAsync(1, "微信", rate: 0.1m);   // 0.1 折 = 原价的 1%
+        var (orderId, _) = await CreateSaleAsync(1, "微信", rate: 0.1m, authPwd: "123456");   // 0.1 折 = 原价的 1%
         var o = await Reload(orderId);
 
         Assert.Equal(9.90m, o.DiscountAmount);
@@ -502,7 +508,7 @@ public class SaleServiceTests : TestBase
     {
         SetStock(ProductAId, 10);   // 总额 10
 
-        var (orderId, _) = await CreateSaleAsync(1, "微信", discount: 9.99m, rate: 8);
+        var (orderId, _) = await CreateSaleAsync(1, "微信", discount: 9.99m, rate: 8, authPwd: "123456");
         var o = await Reload(orderId);
 
         // 两个都给时以折率为准，传进来的金额被忽略
@@ -517,7 +523,7 @@ public class SaleServiceTests : TestBase
         SetStock(ProductAId, 10, 5.00m);   // 总额 20
 
         // 总额 20 → 8 折 → 折后 16 → 抹零 0.40 → 应收 15.60 → 递 20 → 找零 4.40 → 实收 15.60
-        var (orderId, _) = await CreateSaleAsync(2, "现金", cash: 20, roundOff: 0.40m, rate: 8);
+        var (orderId, _) = await CreateSaleAsync(2, "现金", cash: 20, roundOff: 0.40m, rate: 8, authPwd: "123456");
         var o = await Reload(orderId);
 
         Assert.Equal(4.00m, o.DiscountAmount);
@@ -560,7 +566,7 @@ public class SaleServiceTests : TestBase
     {
         SetStock(ProductAId, 10, 5.00m);
 
-        var (orderId, _) = await CreateSaleAsync(2, "现金", cash: 20, rate: 5);
+        var (orderId, _) = await CreateSaleAsync(2, "现金", cash: 20, rate: 5, authPwd: "123456");
         var log = await Db.OperationLogs.AsNoTracking().OrderByDescending(x => x.Id).FirstAsync();
 
         Assert.Equal(10.00m, (await Reload(orderId)).DiscountAmount);
@@ -1009,7 +1015,7 @@ public class SaleServiceTests : TestBase
         SetStock(ProductAId, 10);   // 售价 10 → 总额 20
 
         // 总额 20 → 抹零 2 → 应收 18 → 递 25 → 找零 7 → 实收 18
-        await CreateSaleAsync(2, "现金", cash: 25, roundOff: 2);
+        await CreateSaleAsync(2, "现金", cash: 25, roundOff: 2, authPwd: "123456");
         var page = await SaleSvc.ListAsync(null, null, null, null, 1, 20);
         var row = page.List[0];
 
@@ -1067,7 +1073,7 @@ public class SaleServiceTests : TestBase
     public async Task ListAsync_Row_CarriesDiscountRate_SummaryOmitsIt()
     {
         SetStock(ProductAId, 100);
-        await CreateSaleAsync(2, "微信", rate: 8.8m);    // 总额 20 → 折后 17.60 → 优惠 2.40
+        await CreateSaleAsync(2, "微信", rate: 8.8m, authPwd: "123456");    // 总额 20 → 折后 17.60 → 优惠 2.40
         await CreateSaleAsync(1, "微信", discount: 3);   // 按金额录入
 
         var page = await SaleSvc.ListAsync(null, null, null, null, 1, 20);
@@ -1084,7 +1090,7 @@ public class SaleServiceTests : TestBase
     public async Task ExportListAsync_DiscountRateCarriesUnit()
     {
         SetStock(ProductAId, 100);
-        await CreateSaleAsync(2, "微信", rate: 8.8m);
+        await CreateSaleAsync(2, "微信", rate: 8.8m, authPwd: "123456");
         await CreateSaleAsync(1, "微信", discount: 3);
 
         var rows = await SaleSvc.ExportListAsync(null, null, null, null);
@@ -1116,5 +1122,216 @@ public class SaleServiceTests : TestBase
         var r = await SaleSvc.GetDetailAsync(9999);
         Assert.NotEqual(0, r.Code);
         Assert.Contains("销售单不存在", r.Message);
+    }
+
+    // ================= 混合支付 =================
+    //
+    // 口径（与 SaleOrderPayment 注释一致）：
+    //   已付金额 = Σ 非赊账行；挂账额 = 应收 − 已付（显式填「赊账」行时以该行为准，两者必须相等）
+    //   找零 = 已付 − 应收，且只能来自现金（非现金合计不得超过应收）
+    //   恒等式：Σ 支付明细 = 应收 + 找零
+
+    /// <summary>构造混合支付的一行</summary>
+    private static SalePaymentDto Pay(string method, decimal amount) =>
+        new() { PayMethod = method, Amount = amount };
+
+    /// <summary>以「商品A × qty」为购物清单走混合支付（Payments 非空即混合；商品A 售价 10）</summary>
+    private Task<ApiResult<object>> MixedSaleAsync(decimal qty, params SalePaymentDto[] payments) =>
+        SaleSvc.CreateAsync(new CreateSaleDto
+        {
+            Items = new List<SaleItemDto> { Item(ProductAId, qty) },
+            PayMethod = "混合", Payments = payments.ToList(),
+        });
+
+    private List<SaleOrderPayment> PaymentRows(int orderId) =>
+        Db.SaleOrderPayments.AsNoTracking().Where(p => p.OrderId == orderId).OrderBy(p => p.Id).ToList();
+
+    [Fact]
+    public async Task CreateAsync_MixedPayment_SplitsAmountsAndWritesComposition()
+    {
+        SetStock(ProductAId, 10, 5.00m);
+        var r = await MixedSaleAsync(2, Pay("现金", 12m), Pay("微信", 8m));
+        Assert.Equal(0, r.Code);
+        var id = GetResultDataProp<int>(r.Data!, "id");
+        var o = await Reload(id);
+
+        Assert.Equal(20.00m, o.PayAmount);
+        Assert.Equal("混合", o.PayMethod);          // 支付组成不止一种 ⇒ 记「混合」
+        Assert.Equal(12.00m, o.CashAmount);        // 收款额＝现金那一部分
+        Assert.Equal(0m, o.ChangeAmount);
+        Assert.Equal(20.00m, o.ReceivedAmount);    // 实收 = 真正收到的钱
+        Assert.False(o.IsCredit);
+
+        var rows = PaymentRows(id);
+        Assert.Equal(2, rows.Count);
+        Assert.Equal(12.00m, rows.First(x => x.PayMethod == "现金").Amount);
+        Assert.Equal(8.00m, rows.First(x => x.PayMethod == "微信").Amount);
+        Assert.Equal(o.PayAmount + o.ChangeAmount, rows.Sum(x => x.Amount));   // 恒等式
+    }
+
+    [Fact]
+    public async Task CreateAsync_MixedPayment_CashOverpay_ProducesChange()
+    {
+        SetStock(ProductAId, 10, 5.00m);
+        var r = await MixedSaleAsync(2, Pay("现金", 20m), Pay("微信", 7m));
+        Assert.Equal(0, r.Code);
+        var o = await Reload(GetResultDataProp<int>(r.Data!, "id"));
+
+        Assert.Equal(20.00m, o.PayAmount);
+        Assert.Equal(20.00m, o.CashAmount);        // 现金行填的是递钞额
+        Assert.Equal(7.00m, o.ChangeAmount);       // 27 − 20
+        Assert.Equal(20.00m, o.ReceivedAmount);    // 实收扣掉找零
+        Assert.Equal(27.00m, PaymentRows(o.Id).Sum(x => x.Amount));   // = 应收 + 找零
+    }
+
+    [Fact]
+    public async Task CreateAsync_MixedPayment_Shortfall_BecomesCredit()
+    {
+        SetStock(ProductAId, 10, 5.00m);
+        var r = await MixedSaleAsync(2, Pay("现金", 10m));   // 应收 20，只付了 10
+        Assert.Equal(0, r.Code);
+        var id = GetResultDataProp<int>(r.Data!, "id");
+        var o = await Reload(id);
+
+        Assert.Equal("混合", o.PayMethod);         // 现金 + 挂账 = 两种组成
+        Assert.True(o.IsCredit);
+        Assert.Equal(10.00m, o.ReceivedAmount);    // 只认到手的钱，挂账那 10 不算
+
+        var credit = Db.CreditSales.First(c => c.SaleOrderId == id);
+        Assert.Equal(10.00m, credit.CreditAmount);      // 欠的是差额，不是全额应收
+        Assert.Equal(10.00m, credit.RemainingAmount);
+        Assert.False(credit.Status);
+
+        var rows = PaymentRows(id);
+        Assert.Equal(10.00m, rows.First(x => x.PayMethod == "现金").Amount);
+        Assert.Equal(10.00m, rows.First(x => x.PayMethod == "赊账").Amount);
+        Assert.Equal(o.PayAmount + o.ChangeAmount, rows.Sum(x => x.Amount));
+    }
+
+    [Fact]
+    public async Task CreateAsync_MixedPayment_ExplicitCreditRowMustMatchShortfall()
+    {
+        SetStock(ProductAId, 10);
+        var r = await MixedSaleAsync(2, Pay("现金", 10m), Pay("赊账", 5m));   // 10 + 5 ≠ 应收 20
+        Assert.NotEqual(0, r.Code);
+        Assert.Contains("与应收不符", r.Message);
+        Assert.Empty(Db.SaleOrders);   // 校验失败不落单
+    }
+
+    [Fact]
+    public async Task CreateAsync_MixedPayment_CashlessCannotExceedPayable()
+    {
+        SetStock(ProductAId, 10);
+        var r = await MixedSaleAsync(2, Pay("微信", 25m));   // 非现金 25 > 应收 20，找零不可能来自微信
+        Assert.NotEqual(0, r.Code);
+        Assert.Contains("不能超过应收金额", r.Message);
+    }
+
+    [Fact]
+    public async Task CreateAsync_MixedPayment_CreditRowWhenAlreadyPaidUp_Rejected()
+    {
+        SetStock(ProductAId, 10);
+        var r = await MixedSaleAsync(2, Pay("现金", 20m), Pay("微信", 5m), Pay("赊账", 5m));
+        Assert.NotEqual(0, r.Code);
+        Assert.Contains("无需再挂账", r.Message);
+    }
+
+    [Fact]
+    public async Task CreateAsync_MixedPayment_IgnoresRoundOff()
+    {
+        SetStock(ProductAId, 10, 5.00m);
+        var r = await SaleSvc.CreateAsync(new CreateSaleDto
+        {
+            Items = new List<SaleItemDto> { Item(ProductAId, 2) },
+            PayMethod = "混合", RoundOffAmount = 0.50m,
+            Payments = new List<SalePaymentDto> { Pay("现金", 20m) },
+        });
+        Assert.Equal(0, r.Code);
+        var o = await Reload(GetResultDataProp<int>(r.Data!, "id"));
+
+        Assert.Equal(0m, o.RoundOffAmount);        // 混合支付不抹零
+        Assert.Equal(20.00m, o.PayAmount);
+    }
+
+    [Fact]
+    public async Task CreateAsync_MixedPayment_SingleRow_StaysSingleMethod()
+    {
+        SetStock(ProductAId, 10, 5.00m);
+        var r = await MixedSaleAsync(2, Pay("现金", 20m));
+        var id = GetResultDataProp<int>(r.Data!, "id");
+
+        Assert.Equal("现金", (await Reload(id)).PayMethod);   // 只有一种组成 ⇒ 与单项支付口径一致
+        Assert.Empty(PaymentRows(id));                        // 也就不需要落支付明细
+    }
+
+    [Fact]
+    public async Task CreateAsync_MixedPayment_MergesSameMethodRows()
+    {
+        SetStock(ProductAId, 10);
+        var r = await MixedSaleAsync(2, Pay("微信", 12m), Pay("微信", 8m));   // 同方式多行相加
+        var id = GetResultDataProp<int>(r.Data!, "id");
+
+        Assert.Equal("微信", (await Reload(id)).PayMethod);
+        Assert.Empty(PaymentRows(id));
+    }
+
+    [Fact]
+    public async Task CreateAsync_MixedPayment_UnsupportedMethod_Rejected()
+    {
+        SetStock(ProductAId, 10);
+        var r = await MixedSaleAsync(2, Pay("支票", 20m));
+        Assert.NotEqual(0, r.Code);
+        Assert.Contains("不支持的支付方式", r.Message);
+    }
+
+    [Fact]
+    public async Task CreateAsync_MixedPayment_Shortfall_RejectedWhenCreditDisabled()
+    {
+        SetStock(ProductAId, 10);
+        SetConfig("sale", "{\"allowCredit\":false}");
+        var r = await MixedSaleAsync(2, Pay("现金", 10m));
+        Assert.NotEqual(0, r.Code);
+        Assert.Contains("不允许赊账", r.Message);
+    }
+
+    [Fact]
+    public async Task CreateAsync_MixedPayment_OnlyCreditRow_FullCredit()
+    {
+        SetStock(ProductAId, 10);
+        var r = await MixedSaleAsync(2, Pay("赊账", 20m));
+        Assert.Equal(0, r.Code);
+        var id = GetResultDataProp<int>(r.Data!, "id");
+        var o = await Reload(id);
+
+        Assert.Equal("赊账", o.PayMethod);
+        Assert.True(o.IsCredit);
+        Assert.Equal(0m, o.ReceivedAmount);
+        Assert.Equal(20.00m, Db.CreditSales.First(c => c.SaleOrderId == id).CreditAmount);
+        Assert.Empty(PaymentRows(id));
+    }
+
+    [Fact]
+    public async Task CreateAsync_SinglePayment_WritesNoCompositionRows()
+    {
+        SetStock(ProductAId, 10, 5.00m);
+        var (id, _) = await CreateSaleAsync(2, payMethod: "现金", cash: 20m);
+
+        Assert.Equal("现金", (await Reload(id)).PayMethod);
+        Assert.Empty(PaymentRows(id));
+    }
+
+    [Fact]
+    public async Task GetDetailAsync_MixedPayment_ReturnsComposition()
+    {
+        SetStock(ProductAId, 10, 5.00m);
+        var r = await MixedSaleAsync(2, Pay("现金", 12m), Pay("微信", 8m));
+        var id = GetResultDataProp<int>(r.Data!, "id");
+
+        var d = await SaleSvc.GetDetailAsync(id);
+        Assert.Equal(0, d.Code);
+        var pays = Prop<IEnumerable<object>>(d.Data, "payments")!.ToList();
+        Assert.Equal(2, pays.Count);
+        var wechat = pays.First(x => Prop<string>(x, "payMethod") == "微信");
+        Assert.Equal(8.00m, Prop<decimal>(wechat, "amount"));
     }
 }

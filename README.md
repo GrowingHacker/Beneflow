@@ -53,6 +53,7 @@ copy src\Beneflow.Api\appsettings.example.json src\Beneflow.Api\appsettings.json
 | `ConnectionStrings:Default` | SQL Server 连接串（账号、密码、库名） |
 | `Jwt:Secret` | 随机字符串，至少 32 字节 |
 | `Security:AesKey` | base64 的 32 字节随机密钥（用于敏感字段加密） |
+| `Database:FailOnPendingMigrations` | 可选，默认 `false`。为 `true` 时启动自检一旦发现**未应用的迁移**就拒绝启动；默认只记一条错误日志后继续运行（见「常见问题」） |
 
 ### 3. 建库
 
@@ -87,7 +88,7 @@ Beneflow/
 ├── src/Beneflow.Api/      # 后端项目
 │   ├── Controllers/       # API 控制器（一文件一控制器，统一继承 BaseApiController）
 │   ├── Services/          # 业务服务（按域分目录：Users/Product/Sale/...，接口 + 实现）
-│   ├── Models/            # 实体（Entities/）、DTO、统一响应 ApiResult
+│   ├── Models/            # 实体（Entities/）、请求 DTO（Dtos.cs）、响应 DTO（Responses.cs）、统一响应 ApiResult
 │   ├── Data/              # AppDbContext、DbSeeder 种子数据
 │   │   └── Configurations/  # EF 实体映射（一实体一文件，IEntityTypeConfiguration）
 │   ├── Migrations/        # EF Core 迁移
@@ -97,7 +98,7 @@ Beneflow/
 |
 ├── tests/Beneflow.Tests/  # 测试工程
 │   ├── TestBase.cs        # 共用夹具：独立 InMemory 库 + 全部 Service 实例 + 种子数据 + 断言辅助
-│   ├── Unit/              # 服务单元测试（22 个文件）
+│   ├── Unit/              # 服务单元测试（24 个文件）
 │   └── Integration/       # 进程内全链路集成测试（14 个文件）
 |
 ├── scripts/               # 部署/运维 PowerShell 脚本
@@ -174,7 +175,7 @@ Beneflow/
 
 ## 测试
 
-**当前状态：501 个用例全部通过（Release 约 41 秒，0 失败、0 警告）。**
+**当前状态：549 个用例全部通过（Release 约 1 分钟，0 失败、0 警告）。**
 
 ```powershell
 dotnet test tests/Beneflow.Tests/Beneflow.Tests.csproj --configuration Release
@@ -184,15 +185,15 @@ dotnet test tests/Beneflow.Tests/Beneflow.Tests.csproj --configuration Release
 
 | 层次 | 位置 | 说明 |
 |---|---|---|
-| 服务单元测试 | `Unit/`（22 个文件） | xUnit + EF Core InMemory，每个用例独立数据库；覆盖各 Service 的业务分支与边界 |
+| 服务单元测试 | `Unit/`（24 个文件） | xUnit + EF Core InMemory，每个用例独立数据库；覆盖各 Service 的业务分支与边界 |
 | 集成测试 | `Integration/`（14 个文件） | `WebApplicationFactory<Program>` 进程内跑真实 API 管线，经 `HttpClient` 发真实 HTTP 请求，验证跨模块协作与统一响应契约 |
 | 并发一致性测试 | 上述两处 | 锁契约测试 + 并发收银不超卖，见「并发与一致性」一节 |
 
-公共夹具在 `TestBase.cs`（独立 InMemory 库、全部 Service 实例、基础种子数据，以及给匿名对象取值的断言辅助）；集成测试的基类是 `IntegrationTestBase.cs`。
+公共夹具在 `TestBase.cs`（独立 InMemory 库、全部 Service 实例、基础种子数据，以及按 **JSON 字段名**取返回体字段的断言辅助——取的是前端实际读到的那个名字，属性改名不会被漏掉）；集成测试的基类是 `IntegrationTestBase.cs`。
 
 划分原则是**单元测试吃复杂度，集成测试补结构盲区**，以商品档案导入为例：`Unit/ProductImportTests.cs` 把真实 `.xlsx` 喂给 Service，覆盖表头同义词识别、列映射语义、逐行校验与三种落库行为；`Integration/ProductImportIntegrationTests.cs` 只补前者测不到的部分——multipart 字段名、未登录 401、模板下载的中文文件名响应头、换个端点回查是否真的落库。**字段一改名，前者全绿而功能整体失效，只有后者能发现。** 进货单导入、销售金额口径（金额链 + 列表合计 / 报表 / 导出三处消费侧）都沿用这条划分。
 
-规模：后端源码约 10.3k 行 / 108 个文件（`src/Beneflow.Api/**/*.cs`，不含 EF 自动生成的 `Migrations/`），测试代码约 8.7k 行 / 37 个文件（`tests/**/*.cs`），比例约 0.84 : 1。453 个测试方法（`[Fact]` 434 + `[Theory]` 19），Theory 展开后共 501 个用例。
+规模：后端源码约 11.2k 行 / 113 个文件（`src/Beneflow.Api/**/*.cs`，不含 EF 自动生成的 `Migrations/`），测试代码约 9.7k 行 / 40 个文件（`tests/**/*.cs`），比例约 0.87 : 1。506 个测试方法（`[Fact]` 487 + `[Theory]` 19），Theory 展开后共 554 个用例。
 
 ## 生产部署
 

@@ -172,7 +172,37 @@ public partial class ProductService : IProductService
                 p.PromoEnabled, p.PromoStartAt, p.PromoEndAt, now),
             PromoActive = PromoHelper.IsActive(p.PromoType, p.PromoEnabled, p.PromoStartAt, p.PromoEndAt, now),
             PromoText = PromoHelper.Describe(p.PromoType, p.PromoPrice, p.PromoRate),
+            p.PromoType, p.PromoRate,
         }).ToList();
+    }
+
+    /// <summary>
+    /// 校验条码是否可用：返回 null 表示可用，否则返回该给用户看的中文原因。
+    ///
+    /// <para>
+    /// 新增与编辑共用同一份判断，避免两个入口对同一件事给出两种说法。
+    /// </para>
+    /// <para>
+    /// 除了「在架商品重复」，还拦「被已删除商品占用」：删除只翻 <c>IsDeleted</c> 标记
+    /// （保留在库便于追溯），而条码的唯一索引**不看** <c>IsDeleted</c>（见 ProductConfiguration）。
+    /// 少拦这一种，落库时就会撞唯一索引抛异常 → 用户只看到 500，
+    /// 既不知道被哪个商品占着，也不知道该改条码还是该恢复商品。
+    /// </para>
+    /// </summary>
+    private async Task<string?> CheckBarcodeFreeAsync(string barcode, int? exceptId)
+    {
+        var alive = await _db.Products.AnyAsync(p =>
+            !p.IsDeleted && p.Barcode == barcode && (exceptId == null || p.Id != exceptId));
+        if (alive) return $"条码 {barcode} 已存在";
+
+        var ghostName = await _db.Products.AsNoTracking()
+            .Where(p => p.IsDeleted && p.Barcode == barcode)
+            .Select(p => p.Name)
+            .FirstOrDefaultAsync();
+        if (ghostName != null)
+            return $"条码 {barcode} 已被已删除的商品「{ghostName}」占用（删除只是下架，条码仍保留在库以便追溯）。请改用其它条码。";
+
+        return null;
     }
 
     public async Task<ApiResult<object>> CreateAsync(ProductUpsertDto dto)
@@ -182,8 +212,11 @@ public partial class ProductService : IProductService
 
         var barcode = dto.Barcode?.Trim() ?? "";
         if (string.IsNullOrEmpty(barcode)) barcode = await NewInStoreBarcodeAsync();
-        else if (await _db.Products.AnyAsync(p => !p.IsDeleted && p.Barcode == barcode))
-            return ApiResult<object>.Fail($"条码 {barcode} 已存在");
+        else
+        {
+            var barcodeErr = await CheckBarcodeFreeAsync(barcode, null);
+            if (barcodeErr != null) return ApiResult<object>.Fail(barcodeErr);
+        }
         if (dto.SalePrice < 0 || dto.CostPrice < 0) return ApiResult<object>.Fail("价格不能为负");
 
         var promoType = (dto.PromoType ?? "").Trim();
@@ -206,7 +239,16 @@ public partial class ProductService : IProductService
             PromoEndAt = PromoHelper.NormalizeEnd(dto.PromoEndAt),
         };
         _db.Products.Add(p);
-        await _db.SaveChangesAsync();
+        try
+        {
+            await _db.SaveChangesAsync();
+        }
+        catch (DbUpdateException ex) when (DbErrorHelper.IsUniqueViolation(ex))
+        {
+            // 并发兜底：两个请求同时新增同一个条码时，上面的前置查重会双双通过，只有唯一索引拦得住。
+            // 这里翻成业务失败，否则冒泡出去又是一个 500。
+            return ApiResult<object>.Fail($"条码 {barcode} 已存在，请刷新后重试");
+        }
 
         if (p.StockQuantity > 0)
         {
@@ -278,8 +320,8 @@ public partial class ProductService : IProductService
                 // 非空条码需要检查唯一性（空条码允许重复）
                 if (!string.IsNullOrEmpty(bc))
                 {
-                    if (await _db.Products.AnyAsync(x => x.Id != id && !x.IsDeleted && x.Barcode == bc))
-                        return ApiResult.Fail($"条码 {bc} 已被其他商品使用");
+                    var barcodeErr = await CheckBarcodeFreeAsync(bc, id);
+                    if (barcodeErr != null) return ApiResult.Fail(barcodeErr);
                 }
                 p.Barcode = bc;
                 changed = true;
@@ -392,7 +434,15 @@ public partial class ProductService : IProductService
         if (!changed) return ApiResult.Ok();
         p.UpdatedAt = DateTime.Now;
         await _logs.WriteAsync("商品管理", "编辑商品", $"{p.Barcode} {p.Name}");
-        await _db.SaveChangesAsync();
+        try
+        {
+            await _db.SaveChangesAsync();
+        }
+        catch (DbUpdateException ex) when (DbErrorHelper.IsUniqueViolation(ex))
+        {
+            // 并发兜底：改成一个别人刚占用的条码时会撞唯一索引，翻成业务失败而不是 500
+            return ApiResult.Fail($"条码 {p.Barcode} 已存在，请刷新后重试");
+        }
         return ApiResult.Ok();
     }
 

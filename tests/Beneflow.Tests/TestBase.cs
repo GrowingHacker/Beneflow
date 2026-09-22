@@ -198,17 +198,21 @@ public abstract class TestBase : IDisposable
             .OrderByDescending(s => s.Id)
             .FirstOrDefault();
 
-    /// <summary>从 ApiResult 的 Data（匿名类型）中提取属性值</summary>
+    /// <summary>从 ApiResult 的 Data 中提取属性值（按 JSON 字段名，见 <see cref="FindProp"/>）</summary>
     protected T? GetResultDataProp<T>(object data, string propName)
     {
-        var prop = data.GetType().GetProperty(propName);
+        var prop = FindProp(data.GetType(), propName);
         if (prop == null) return default;
         return (T?)prop.GetValue(data);
     }
 
-    /// <summary>读取任意对象（多为匿名类型）的属性值</summary>
-    protected static object? Prop(object? obj, string propName) =>
-        obj?.GetType().GetProperty(propName)?.GetValue(obj);
+    /// <summary>读取任意对象的属性值（按 JSON 字段名，见 <see cref="FindProp"/>）</summary>
+    protected static object? Prop(object? obj, string propName)
+    {
+        if (obj == null) return null;
+        var prop = FindProp(obj.GetType(), propName);
+        return prop?.GetValue(obj);
+    }
 
     /// <summary>读取任意对象的属性值并转换为指定类型</summary>
     protected static T? Prop<T>(object? obj, string propName)
@@ -216,6 +220,21 @@ public abstract class TestBase : IDisposable
         var v = Prop(obj, propName);
         return v is T t ? t : default;
     }
+
+    /// <summary>
+    /// 按「前端看到的字段名」找属性。
+    /// 响应 DTO 的属性是 PascalCase，序列化策略会转成 camelCase，前端读到的就是 camelCase，
+    /// 所以测试里写的字段名（"id"、"createdAt"）与属性名（Id、CreatedAt）大小写不同 ——
+    /// 先按原名找（匿名对象时代就是这个名字），找不到再按「属性名转 camelCase」找。
+    /// 这样测试断言的就是**实际的线上字段名**，而不是碰巧同名的属性。
+    /// </summary>
+    private static System.Reflection.PropertyInfo? FindProp(Type type, string propName) =>
+        type.GetProperty(propName)
+        ?? type.GetProperties().FirstOrDefault(p =>
+            string.Equals(ToCamel(p.Name), propName, StringComparison.Ordinal));
+
+    private static string ToCamel(string name) =>
+        name.Length == 0 ? name : char.ToLowerInvariant(name[0]) + name.Substring(1);
 
     /// <summary>构造 JsonElement（供接收 JsonElement 的服务方法使用）</summary>
     protected static JsonElement Json(string json)

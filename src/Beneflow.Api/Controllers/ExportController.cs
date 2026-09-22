@@ -213,18 +213,19 @@ public class ExportController : BaseApiController
         var items = obj?.GetType().GetProperty("items")?.GetValue(obj) as System.Collections.IEnumerable
                     ?? Array.Empty<object>();
         var rows = items.Cast<object>().Select(Props).ToList();
-        // 合计行：ExcelExportService 按 SummaryFields 自动累加 totalAmount
+        // 合计行：ExcelExportService 按 SummaryFields 自动累加 amount。
+        // 金额带符号（进货为正、退货为负），所以「合计」就是净应付 —— 与页面上的口径一致。
         return Output(new ExcelReport
         {
             SheetName = "供应商对账单",
-            Title = "供应商对账单",
+            Title = "供应商对账单（进货为正、退货为负，合计＝净应付）",
             FileName = "供应商对账单_" + supplierId + ".xlsx",
             Columns = new()
             {
-                f("orderNo","单号"), dt("createdAt","时间"),
-                n("totalQty","数量"), m("totalAmount","金额"),
+                f("type","类型"), f("orderNo","单号"), dt("createdAt","时间"),
+                n("qty","数量"), m("amount","金额"),
             },
-            Rows = rows, SummaryLabel = "合计", SummaryFields = { "totalAmount" },
+            Rows = rows, SummaryLabel = "净应付", SummaryFields = { "amount" },
         }, format);
     }
 

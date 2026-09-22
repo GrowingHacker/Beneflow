@@ -12,17 +12,17 @@ public class MenusController : BaseApiController
 
     /// <summary>菜单树</summary>
     [HttpGet]
-    public async Task<ApiResult<List<object>>> Tree() =>
-        ApiResult<List<object>>.Ok(await _svc.TreeAsync());
+    public async Task<ApiResult<List<MenuNodeDto>>> Tree() =>
+        ApiResult<List<MenuNodeDto>>.Ok(await _svc.TreeAsync());
 
     /// <summary>新增菜单；「菜单/按钮」类型必须填写权限码</summary>
     [HttpPost]
-    public async Task<ApiResult<object>> Create([FromBody] MenuBody b)
+    public async Task<ApiResult<IdResultDto>> Create([FromBody] MenuBody b)
     {
         if (string.IsNullOrWhiteSpace(b.Name) || string.IsNullOrWhiteSpace(b.Type))
-            return ApiResult<object>.Fail("菜单名称和类型不能为空");
+            return ApiResult<IdResultDto>.Fail("菜单名称和类型不能为空");
         if (b.Type != "目录" && string.IsNullOrWhiteSpace(b.PermCode))
-            return ApiResult<object>.Fail("菜单/按钮必须填写权限码");
+            return ApiResult<IdResultDto>.Fail("菜单/按钮必须填写权限码");
         return await _svc.CreateAsync(b.Name.Trim(), b.Type.Trim(), b.PermCode, b.ParentId, b.Sort);
     }
 

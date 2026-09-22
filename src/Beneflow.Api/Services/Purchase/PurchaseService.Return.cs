@@ -23,6 +23,14 @@ public partial class PurchaseService : IPurchaseService
             select new { r, s.Name, UserName = u.Name };
 
         var total = await q.CountAsync();
+
+        // 合计口径与销售单列表一致：同筛选条件、剔除已作废 —— 作废单在列表里仍可查到，但不参与金额统计，
+        // 否则「应退合计」会把已经取消的退货也算进去。
+        var sum = (await q.Where(x => !x.r.IsVoided)
+            .GroupBy(x => 1)
+            .Select(g => new { Returns = g.Count(), RefundAmount = g.Sum(x => x.r.RefundAmount) })
+            .ToListAsync()).FirstOrDefault();
+
         pageSize = pageSize <= 0 ? 20 : Math.Min(pageSize, 200);
         page = Math.Max(1, page);
         var rows = await q.Skip((page - 1) * pageSize).Take(pageSize).ToListAsync();
@@ -31,9 +39,19 @@ public partial class PurchaseService : IPurchaseService
         {
             id = r.r.Id, orderNo = r.r.OrderNo, supplierId = r.r.SupplierId, supplierName = r.Name,
             refundAmount = r.r.RefundAmount, reason = r.r.Reason,
+            isVoided = r.r.IsVoided,
+            status = r.r.IsVoided ? "已作废" : "已退货",
             createdAt = r.r.CreatedAt.ToString("yyyy-MM-dd HH:mm"), createdByName = r.UserName,
         }).ToList();
-        return new PagedResult<object> { List = list, Total = total, Page = page, PageSize = pageSize };
+        return new PagedResult<object>
+        {
+            List = list, Total = total, Page = page, PageSize = pageSize,
+            Summary = new
+            {
+                returns = sum?.Returns ?? 0,
+                refundAmount = Math.Round(sum?.RefundAmount ?? 0, 2),
+            },
+        };
     }
 
     /// <summary>创建采购退货单：扣减库存（不允许退成负数）、写流水、记录应退款项。</summary>
@@ -115,6 +133,80 @@ public partial class PurchaseService : IPurchaseService
         {
             await tx.RollbackAsync();
             throw new InvalidOperationException("创建采购退货单失败：" + ex.Message, ex);
+        }
+    }
+
+    /// <summary>作废采购退货单：回补库存、写流水、标记作废（照 <see cref="VoidAsync"/> 的既有写法）。</summary>
+    public async Task<ApiResult> VoidReturnAsync(int id)
+    {
+        // 先只读地取出涉及的商品用于加锁（此步不修改任何数据），
+        // 「是否已作废」的判定留在锁内，同一退货单的并发作废会被串行化，不会重复回补库存。
+        var productIds = await _db.PurchaseReturnDetails.AsNoTracking()
+            .Where(d => d.ReturnId == id).Select(d => d.ProductId).Distinct().ToListAsync();
+
+        using (await _stockLock.AcquireAsync(productIds))
+        {
+            return await VoidReturnCoreAsync(id);
+        }
+    }
+
+    /// <summary>
+    /// 作废采购退货单的实际逻辑；调用方须已持有相关商品的库存锁。
+    ///
+    /// 只回补数量、**不动成本价**：退货那一刻 `CreateReturnCoreAsync` 也只改了 StockQuantity
+    /// （没有重算移动加权成本），所以把数量加回去就完全还原了，成本价本来就没被这次退货碰过。
+    /// </summary>
+    private async Task<ApiResult> VoidReturnCoreAsync(int id)
+    {
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        try
+        {
+            var ret = await _db.PurchaseReturns.FirstOrDefaultAsync(r => r.Id == id);
+            if (ret == null) return ApiResult.Fail("采购退货单不存在");
+            if (ret.IsVoided) return ApiResult.Fail("该退货单已作废，无需重复操作");
+
+            var details = await _db.PurchaseReturnDetails.Where(d => d.ReturnId == id).ToListAsync();
+            if (details.Count == 0) return ApiResult.Fail("退货单缺少明细，无法作废");
+
+            var productIds = details.Select(d => d.ProductId).Distinct().ToList();
+            var products = await _db.Products.Where(p => productIds.Contains(p.Id)).ToDictionaryAsync(p => p.Id);
+
+            foreach (var d in details)
+            {
+                if (!products.TryGetValue(d.ProductId, out var p))
+                    return ApiResult.Fail($"商品记录已被删除（ID {d.ProductId}），无法回补库存");
+
+                var before = p.StockQuantity;
+                p.StockQuantity += d.Qty;   // 退货是出库，作废即把当初减掉的加回来
+                p.UpdatedAt = DateTime.Now;
+
+                _db.StockLogs.Add(new StockLog
+                {
+                    ProductId = p.Id, ChangeType = "采购退货作废回补", ChangeQty = d.Qty,
+                    BeforeQty = before, AfterQty = p.StockQuantity,
+                    RefNo = ret.OrderNo, CreatedBy = _me.Id, CreatedAt = DateTime.Now,
+                });
+            }
+
+            ret.IsVoided = true;
+            ret.VoidedAt = DateTime.Now;
+
+            _db.OperationLogs.Add(new OperationLog
+            {
+                UserId = _me.Id, UserName = _me.Username, IpAddress = _me.ClientIp,
+                Module = "采购管理",
+                Action = "作废采购退货单",
+                Target = $"{ret.OrderNo} 应退 ¥{ret.RefundAmount}，回补库存 {details.Sum(d => d.Qty)} 件",
+            });
+
+            await _db.SaveChangesAsync();
+            await tx.CommitAsync();
+            return ApiResult.Ok();
+        }
+        catch (Exception ex)
+        {
+            await tx.RollbackAsync();
+            throw new InvalidOperationException("作废采购退货单失败：" + ex.Message, ex);
         }
     }
 }

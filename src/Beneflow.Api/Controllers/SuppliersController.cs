@@ -13,17 +13,17 @@ public class SuppliersController : BaseApiController
 
     /// <summary>供应商列表（按关键词搜索，分页）</summary>
     [HttpGet]
-    public async Task<ApiResult<PagedResult<object>>> List(
+    public async Task<ApiResult<PagedResult<SupplierListItemDto>>> List(
         [FromQuery] string? keyword, [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
-        => ApiResult<PagedResult<object>>.Ok(await _svc.ListAsync(keyword, page, pageSize));
+        => ApiResult<PagedResult<SupplierListItemDto>>.Ok(await _svc.ListAsync(keyword, page, pageSize));
 
     /// <summary>供应商详情</summary>
     [HttpGet("{id:int}")]
-    public Task<ApiResult<object>> Get(int id) => _svc.GetAsync(id);
+    public Task<ApiResult<SupplierDetailDto>> Get(int id) => _svc.GetAsync(id);
 
     /// <summary>新增供应商</summary>
     [HttpPost]
-    public Task<ApiResult<object>> Create([FromBody] SupplierUpsertDto dto) => _svc.CreateAsync(dto);
+    public Task<ApiResult<IdResultDto>> Create([FromBody] SupplierUpsertDto dto) => _svc.CreateAsync(dto);
 
     /// <summary>整体更新；兼容仅 { status } 的启停开关提交</summary>
     [HttpPut("{id:int}")]

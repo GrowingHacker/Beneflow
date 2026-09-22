@@ -6,6 +6,6 @@ namespace Beneflow.Api.Services;
 public interface IAuthService
 {
     Task<List<string>> GetPermissionCodesAsync(int userId);
-    Task<ApiResult<object>> LoginAsync(string username, string password, string? ip);
+    Task<ApiResult<LoginResultDto>> LoginAsync(string username, string password, string? ip);
     Task<ApiResult> ChangePasswordAsync(int userId, string oldPwd, string newPwd);
 }

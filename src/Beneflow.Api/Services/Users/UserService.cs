@@ -16,7 +16,7 @@ public class UserService : IUserService
     public UserService(AppDbContext db, ICurrentUser me, ILogService logs, AccountStatusCache status)
     { _db = db; _me = me; _logs = logs; _status = status; }
 
-    public async Task<PagedResult<object>> ListAsync(string? keyword, int page, int pageSize)
+    public async Task<PagedResult<UserListItemDto>> ListAsync(string? keyword, int page, int pageSize)
     {
         var q =
             from u in _db.Users.AsNoTracking()
@@ -34,31 +34,31 @@ public class UserService : IUserService
         page = Math.Max(1, page);
         var rows = await q.Skip((page - 1) * pageSize).Take(pageSize).ToListAsync();
 
-        var list = rows.Select(x => (object)new
+        var list = rows.Select(x => new UserListItemDto
         {
-            id = x.u.Id, username = x.u.Username, name = x.u.Name,
-            phone = x.u.Phone, role = x.RoleName ?? "", roleCode = x.Code,
-            status = x.u.Status ? "启用" : "禁用", remark = x.u.Remark,
-            createdAt = x.u.CreatedAt.ToString("yyyy-MM-dd"),
+            Id = x.u.Id, Username = x.u.Username, Name = x.u.Name,
+            Phone = x.u.Phone, Role = x.RoleName ?? "", RoleCode = x.Code,
+            Status = x.u.Status ? "启用" : "禁用", Remark = x.u.Remark,
+            CreatedAt = x.u.CreatedAt.ToString("yyyy-MM-dd"),
         }).ToList();
-        return new PagedResult<object> { List = list, Total = total, Page = page, PageSize = pageSize };
+        return new PagedResult<UserListItemDto> { List = list, Total = total, Page = page, PageSize = pageSize };
     }
 
-    public async Task<ApiResult<object>> CreateAsync(UserCreateDto dto)
+    public async Task<ApiResult<IdResultDto>> CreateAsync(UserCreateDto dto)
     {
         dto.Username = dto.Username?.Trim() ?? "";
         if (!System.Text.RegularExpressions.Regex.IsMatch(dto.Username, "^[A-Za-z0-9]{4,20}$"))
-            return ApiResult<object>.Fail("用户名须为 4-20 位字母或数字");
+            return ApiResult<IdResultDto>.Fail("用户名须为 4-20 位字母或数字");
         if (string.IsNullOrEmpty(dto.Password) || dto.Password.Length < 6
             || !dto.Password.Any(char.IsDigit) || !dto.Password.Any(char.IsLetter))
-            return ApiResult<object>.Fail("密码必须包含数字和字母，长度不少于 6 位");
+            return ApiResult<IdResultDto>.Fail("密码必须包含数字和字母，长度不少于 6 位");
         if (!string.IsNullOrEmpty(dto.Phone) &&
             !System.Text.RegularExpressions.Regex.IsMatch(dto.Phone, "^1[3-9]\\d{9}$"))
-            return ApiResult<object>.Fail("手机号格式不正确");
+            return ApiResult<IdResultDto>.Fail("手机号格式不正确");
         if (await _db.Roles.FindAsync(dto.RoleId) == null)
-            return ApiResult<object>.Fail("请选择角色");
+            return ApiResult<IdResultDto>.Fail("请选择角色");
         if (await _db.Users.AnyAsync(u => !u.IsDeleted && u.Username == dto.Username))
-            return ApiResult<object>.Fail($"用户名 {dto.Username} 已存在");
+            return ApiResult<IdResultDto>.Fail($"用户名 {dto.Username} 已存在");
 
         var salt = PasswordHasher.NewSalt();
         var user = new UserInfo
@@ -71,7 +71,7 @@ public class UserService : IUserService
         _db.UserRoles.Add(new UserRole { UserId = user.Id, RoleId = dto.RoleId });
         await _logs.WriteAsync("用户管理", "新增用户", $"{user.Username} {user.Name}");
         await _db.SaveChangesAsync();
-        return ApiResult<object>.Ok(new { id = user.Id });
+        return ApiResult<IdResultDto>.Ok(new IdResultDto { Id = user.Id });
     }
 
     public async Task<ApiResult> UpdateAsync(int id, UserUpdateDto dto, bool isAdmin)

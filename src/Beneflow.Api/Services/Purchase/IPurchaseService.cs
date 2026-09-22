@@ -15,6 +15,8 @@ public interface IPurchaseService
     Task<ApiResult<object>> UpdateAsync(int id, CreatePurchaseDto dto);
     Task<PagedResult<object>> ReturnListAsync(string? keyword, int page, int pageSize);
     Task<ApiResult<object>> CreateReturnAsync(CreatePurchaseReturnDto dto);
+    /// <summary>作废采购退货单：回补库存、写流水、标记作废；已作废的不重复处理</summary>
+    Task<ApiResult> VoidReturnAsync(int id);
     /// <summary>进货单全量导出（按 keyword/dateFrom/dateTo 筛选，不分页）</summary>
     Task<List<Dictionary<string, object?>>> ExportListAsync(string? keyword, string? dateFrom, string? dateTo);
 

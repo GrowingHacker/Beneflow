@@ -141,4 +141,53 @@ public class CreditIntegrationTests : IntegrationTestBase
         Assert.Equal("13800138000", credit.GetProperty("phone").GetString());
         Assert.Equal("月底结清", credit.GetProperty("remark").GetString());
     }
+
+    /// <summary>建一个商品（售价 10、库存 10），返回商品 Id。混合支付用例都要一份自有数据。</summary>
+    private async Task<int> CreateProductAsync(string name)
+    {
+        var cats = await ReadBody(await Client.GetAsync("/api/v1/categories"));
+        var catId = cats.GetProperty("data").EnumerateArray().First().GetProperty("id").GetInt32();
+        var prodResp = await PostJsonAsync("/api/v1/products", new
+        {
+            barcode = "", name, categoryId = catId, unit = "瓶", salePrice = 10m, costPrice = 8m,
+            stockQuantity = 10, safetyStock = 0, hasExpiry = false, shelfLifeDays = 0,
+            isWeighted = false, status = true,
+        });
+        return (await ExpectOk(prodResp)).GetProperty("id").GetInt32();
+    }
+
+    /// <summary>
+    /// 混合支付（现金 12 + 微信 8，应收 20）走 HTTP 全链路：明细落支付构成、实收/收款额/收款方式按后端口径重算，
+    /// 且「收款方式 = 混合」在列表筛选里查得到。
+    /// </summary>
+    [Fact]
+    public async Task Sale_MixedPayment_RecordsCompositionAndShowsInDetail()
+    {
+        await LoginAsAdminAsync();
+        var productId = await CreateProductAsync("ITMX_" + Guid.NewGuid().ToString("N")[..8]);
+
+        var saleResp = await PostJsonAsync("/api/v1/sales", new
+        {
+            items = new[] { new { productId, qty = 2m, unitPrice = 10m, subTotal = 20m } },
+            totalAmount = 20m, discountAmount = 0m, payAmount = 20m,
+            payMethod = "混合", isCredit = false,
+            payments = new[] { new { payMethod = "现金", amount = 12m }, new { payMethod = "微信", amount = 8m } },
+        });
+        var saleData = await ExpectOk(saleResp);
+        var orderId = saleData.GetProperty("id").GetInt32();
+
+        var detail = await ReadBody(await Client.GetAsync($"/api/v1/sales/{orderId}"));
+        var d = detail.GetProperty("data");
+        Assert.Equal("混合", d.GetProperty("payMethod").GetString());
+        Assert.Equal(20m, d.GetProperty("receivedAmount").GetDecimal());
+        Assert.Equal(12m, d.GetProperty("cashAmount").GetDecimal());
+        var pays = d.GetProperty("payments").EnumerateArray().ToList();
+        Assert.Equal(2, pays.Count);
+        Assert.Equal(8m, pays.First(x => x.GetProperty("payMethod").GetString() == "微信")
+            .GetProperty("amount").GetDecimal());
+
+        var listBody = await ReadBody(await Client.GetAsync("/api/v1/sales?payMethod=混合&pageSize=200"));
+        Assert.Contains(listBody.GetProperty("data").GetProperty("list").EnumerateArray(),
+            x => x.GetProperty("id").GetInt32() == orderId);
+    }
 }

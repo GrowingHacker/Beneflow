@@ -13,13 +13,13 @@ public class LogsController : BaseApiController
 
     /// <summary>操作日志列表（按关键词/日期筛选，分页；日志只读不可删除）</summary>
     [HttpGet]
-    public async Task<ApiResult<PagedResult<object>>> List(
+    public async Task<ApiResult<PagedResult<OperationLogItemDto>>> List(
         [FromQuery] string? keyword, [FromQuery] string? dateFrom, [FromQuery] string? dateTo,
         [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
     {
         DateTime.TryParse(dateFrom, out var from);
         DateTime.TryParse(dateTo, out var to);
-        return ApiResult<PagedResult<object>>.Ok(
+        return ApiResult<PagedResult<OperationLogItemDto>>.Ok(
             await _svc.QueryAsync(keyword,
                 string.IsNullOrEmpty(dateFrom) ? null : from,
                 string.IsNullOrEmpty(dateTo) ? null : to,

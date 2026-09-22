@@ -26,7 +26,7 @@
                   <div class="muted" style="font-size:12px;">{{ row.barcode }}</div>
                 </template>
               </el-table-column>
-              <el-table-column label="单价" width="112">
+              <el-table-column label="单价" width="124">
                 <template #default="{ row }">
                   <template v-if="row.originPrice > row.salePrice">
                     <s class="muted" style="font-size:11px;">{{ common.money(row.originPrice) }}</s>
@@ -34,6 +34,9 @@
                   </template>
                   <template v-else>{{ common.money(row.salePrice) }}</template>
                   <span class="muted" style="font-size:11px;">/{{ row.unit || '件' }}</span>
+                  <div v-if="cutText(row.originPrice, row.salePrice, row.promoType, row.promoRate)" style="font-size:11px;color:#f56c6c;white-space:nowrap;">
+                    {{ cutText(row.originPrice, row.salePrice, row.promoType, row.promoRate) }}
+                  </div>
                 </template>
               </el-table-column>
               <el-table-column label="数量 / 重量" width="140">
@@ -104,6 +107,7 @@
           <el-select v-model="payMethodFilter" placeholder="收款方式" clearable style="width:130px;">
             <el-option label="现金" value="现金" /><el-option label="微信" value="微信" />
             <el-option label="支付宝" value="支付宝" /><el-option label="赊账" value="赊账" />
+            <el-option label="混合" value="混合" />
           </el-select>
           <el-button type="primary" @click="searchOrders">查询</el-button>
           <div class="grow"></div>
@@ -192,6 +196,9 @@
         <template v-else>{{ common.money(effOf(weighProduct)) }}</template>
         / {{ weighProduct?.unit || '斤' }}
       </div>
+      <div v-if="cutText(weighProduct?.salePrice, effOf(weighProduct), weighProduct?.promoType, weighProduct?.promoRate, '/' + (weighProduct?.unit || '斤'))" style="font-size:12px;color:#f56c6c;margin-top:2px;">
+        {{ cutText(weighProduct?.salePrice, effOf(weighProduct), weighProduct?.promoType, weighProduct?.promoRate, '/' + (weighProduct?.unit || '斤')) }}
+      </div>
     </div>
     <el-form label-width="70px">
       <el-form-item label="重量">
@@ -200,6 +207,9 @@
       </el-form-item>
       <el-form-item label="金额">
         <span class="cart-total" style="font-size:22px;">{{ common.money(effOf(weighProduct) * weighQty) }}</span>
+        <span v-if="weighProduct && Number(weighProduct.salePrice) > effOf(weighProduct)" class="muted" style="font-size:12px;margin-left:10px;">
+          已省 {{ common.money((Number(weighProduct.salePrice) - effOf(weighProduct)) * weighQty) }}
+        </span>
       </el-form-item>
     </el-form>
     <template #footer>
@@ -208,46 +218,132 @@
     </template>
   </el-dialog>
 
-  <!-- 结算弹窗：优惠方案只在商品档案里定义，收银台不提供任何让利入口，
-       故这里只有「商品总额（已含档案优惠）→ 抹零 → 应收 → 收款额 → 找零」 -->
-  <el-dialog v-model="settleDialog" title="结算" width="440px" @closed="onSettleClosed">
-    <div style="text-align:center; margin-bottom:14px;">
-      <div class="muted">应收金额</div>
-      <div class="cart-total" style="font-size:30px;">{{ common.money(payAmount) }}</div>
-    </div>
-    <el-form label-width="90px">
-      <el-form-item label="商品总额">
-        <span>{{ common.money(totalAmount) }}</span>
-      </el-form-item>
-      <el-form-item v-if="payMethod === '现金'" label="抹零金额">
-        <el-input-number v-model="roundOff" :min="0" :max="totalAmount" :precision="2" controls-position="right" />
-        <el-button text type="primary" @click="roundOffToJiao">抹到角</el-button>
-      </el-form-item>
-      <el-form-item label="收款方式">
-        <el-radio-group v-model="payMethod">
-          <el-radio-button label="现金">现金</el-radio-button>
-          <el-radio-button label="微信">微信</el-radio-button>
-          <el-radio-button label="支付宝">支付宝</el-radio-button>
-          <el-radio-button label="赊账">赊账</el-radio-button>
-        </el-radio-group>
-      </el-form-item>
-      <el-form-item v-if="payMethod === '现金'" label="收款金额">
-        <el-input-number v-model="cashReceived" :min="0" :precision="2" controls-position="right" style="width:180px;" />
-        <span style="margin-left:10px;">找零 <b class="success-text">{{ common.money(changeAmount) }}</b></span>
-      </el-form-item>
-      <el-form-item v-if="payMethod === '赊账'" label="顾客微信">
-        <el-input v-model="wechatId" placeholder="顾客微信号（选填）" />
-      </el-form-item>
-      <el-form-item v-if="payMethod === '赊账'" label="手机号">
-        <el-input v-model="creditPhone" placeholder="顾客手机号（选填）" />
-      </el-form-item>
-      <el-form-item v-if="payMethod === '赊账'" label="备注">
-        <el-input v-model="creditRemark" placeholder="备注信息（选填）" />
-      </el-form-item>
-    </el-form>
+  <!-- 结算弹窗：优惠方案只在商品档案里定义，收银台不提供任何折扣输入，两个形态都没有。
+       ① 单项支付：商品总额（已含档案优惠）→ 抹零 → 收款方式 → 收款金额 → 找零
+       ② 混合支付：点左下角「混合支付」进入 —— 应收金额 → 逐行填各支付方式 → 已付/差额挂账/找零
+       混合模式不提供抹零（抹零是现金找零的产物，金额由各行凑出来，抹零会让「各行之和 = 应收 + 找零」失去落点）
+       抹零是收银台**唯一**活着的让利口子，所以它也是风控唯一的落点：抹零超过设置里的上限时
+       就地要店主密码（限额在「系统设置 → 销售设置」，权威判定在服务端）。 -->
+  <el-dialog v-model="settleDialog" title="结算" width="460px" @closed="onSettleClosed">
+    <!-- ============ 单项支付 ============ -->
+    <template v-if="!mixedMode">
+      <div style="text-align:center; margin-bottom:14px;">
+        <div class="muted">应收金额</div>
+        <div class="cart-total" style="font-size:30px;">{{ common.money(payAmount) }}</div>
+      </div>
+      <el-form label-width="90px">
+        <el-form-item label="商品总额">
+          <span>{{ common.money(totalAmount) }}</span>
+        </el-form-item>
+        <el-form-item v-if="payMethod === '现金'" label="抹零金额">
+          <el-input-number v-model="roundOff" :min="0" :max="totalAmount" :precision="2" controls-position="right" />
+          <el-button text type="primary" @click="roundOffToJiao">抹到角</el-button>
+        </el-form-item>
+        <el-form-item v-if="roundOffOverLimit" label="店主授权">
+          <el-input v-model="discountAuthPwd" type="password" show-password placeholder="超额让利需店主密码" style="width:190px;" />
+          <div class="form-tip danger-text">
+            抹零 {{ common.money(roundOff) }} 超出上限 {{ common.money(maxRoundOff) }}，需店主授权（超限尝试会记入操作日志）
+          </div>
+        </el-form-item>
+        <el-form-item label="收款方式">
+          <el-radio-group v-model="payMethod">
+            <el-radio-button label="现金">现金</el-radio-button>
+            <el-radio-button label="微信">微信</el-radio-button>
+            <el-radio-button label="支付宝">支付宝</el-radio-button>
+            <el-radio-button label="赊账">赊账</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="payMethod === '现金'" label="收款金额">
+          <el-input-number v-model="cashReceived" :min="0" :precision="2" controls-position="right" style="width:180px;" />
+          <span style="margin-left:10px;">找零 <b class="success-text">{{ common.money(changeAmount) }}</b></span>
+        </el-form-item>
+        <el-form-item v-if="payMethod === '赊账'" label="顾客微信">
+          <el-input v-model="wechatId" placeholder="顾客微信号（选填）" />
+        </el-form-item>
+        <el-form-item v-if="payMethod === '赊账'" label="手机号">
+          <el-input v-model="creditPhone" placeholder="顾客手机号（选填）" />
+        </el-form-item>
+        <el-form-item v-if="payMethod === '赊账'" label="备注">
+          <el-input v-model="creditRemark" placeholder="备注信息（选填）" />
+        </el-form-item>
+      </el-form>
+    </template>
+
+    <!-- ============ 混合支付 ============ -->
+    <template v-else>
+      <div style="display:flex;align-items:flex-start;margin-bottom:12px;">
+        <div style="flex:1;">
+          <div class="muted">应收金额</div>
+          <div class="cart-total" style="font-size:30px;">{{ common.money(payAmount) }}</div>
+        </div>
+        <div style="text-align:right;padding-top:4px;">
+          <div class="muted" style="font-size:12px;">商品总额</div>
+          <div>{{ common.money(totalAmount) }}</div>
+        </div>
+      </div>
+
+      <div class="toolbar" style="margin-bottom:8px;">
+        <span style="font-weight:600;">支付方式</span>
+        <el-tag type="primary" size="small" effect="dark" style="margin-left:6px;">混合支付</el-tag>
+        <span class="muted" style="font-size:12px;margin-left:6px;">可同时选择多种支付方式，金额自动合计</span>
+        <div class="grow"></div>
+        <el-button text type="primary" size="small" @click="mixedMode=false">切换回单项支付</el-button>
+      </div>
+
+      <!-- 每行一种支付方式；「全部」= 应收扣掉其他各行后的剩余，「一半」= 剩余的一半 -->
+      <div v-for="(row, i) in mixedRows" :key="i" class="pay-row">
+        <span class="pay-row-name">{{ row.method }}</span>
+        <el-input-number v-model="row.amount" :min="0" :precision="2" :controls="false" size="small" style="width:108px;" />
+        <span class="muted" style="font-size:12px;">元</span>
+        <el-button text size="small" @click="fillPayRow(i, 'all')">全部</el-button>
+        <el-button text size="small" @click="fillPayRow(i, 'half')">一半</el-button>
+        <el-button text size="small" @click="fillPayRow(i, 'clear')">清零</el-button>
+        <el-button text type="danger" size="small" :disabled="mixedRows.length <= 1" title="删除该支付方式" @click="removePayRow(i)">
+          <el-icon><Delete /></el-icon>
+        </el-button>
+      </div>
+
+      <el-dropdown v-if="addableMethods.length" trigger="click" style="width:100%;" @command="addPayRow">
+        <el-button size="small" style="width:100%;border-style:dashed;">+ 添加支付方式</el-button>
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item v-for="m in addableMethods" :key="m" :command="m">{{ m }}</el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
+
+      <div v-if="mixedError" class="danger-text" style="font-size:12px;margin-top:10px;">{{ mixedError }}</div>
+
+      <div class="settle-foot" style="border-top:1px solid #ebeef5;padding-top:10px;margin-top:10px;">
+        <span>已付金额 <b class="cart-total">{{ common.money(mixedPaid) }}</b></span>
+        <div class="settle-spacer"></div>
+        <span v-if="mixedCredit > 0" class="danger-text" style="margin-right:14px;">
+          差额挂账 <b>{{ common.money(mixedCredit) }}</b>
+        </span>
+        <span>找零 <b class="success-text">{{ mixedOverpaid ? '—' : common.money(mixedChange) }}</b></span>
+      </div>
+
+      <!-- 有挂账才有赊账信息可填（挂账会生成一笔赊账记录，靠微信号/手机号找顾客） -->
+      <el-form v-if="mixedCredit > 0" label-width="90px" style="margin-top:12px;">
+        <el-form-item label="顾客微信">
+          <el-input v-model="wechatId" placeholder="顾客微信号（选填）" />
+        </el-form-item>
+        <el-form-item label="手机号">
+          <el-input v-model="creditPhone" placeholder="顾客手机号（选填）" />
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input v-model="creditRemark" placeholder="挂账备注（选填）" />
+        </el-form-item>
+      </el-form>
+    </template>
+
     <template #footer>
-      <el-button @click="settleDialog=false">取消</el-button>
-      <el-button type="primary" :loading="settling" @click="confirmSettle">{{ payMethod === '赊账' ? '确认结算' : '确认收款' }}</el-button>
+      <div class="settle-foot">
+        <el-button v-if="!mixedMode" @click="enterMixed"><el-icon style="margin-right:4px;"><Wallet /></el-icon>混合支付</el-button>
+        <div class="settle-spacer"></div>
+        <el-button @click="settleDialog=false">取消</el-button>
+        <el-button type="primary" :loading="settling" @click="confirmSettle">{{ settleButtonText }}</el-button>
+      </div>
     </template>
   </el-dialog>
 
@@ -275,6 +371,15 @@
       <div class="sd-amt sd-amt-main"><div class="sd-amt-label">应收</div><div class="sd-amt-value">{{ common.money(detail.payAmount) }}</div></div>
       <div class="sd-amt sd-amt-tail"><div class="sd-amt-label">实收</div><div class="sd-amt-value">{{ common.money(detail.receivedAmount) }}</div></div>
       <div class="sd-amt"><div class="sd-amt-label">找零</div><div class="sd-amt-value">{{ common.money(detail.changeAmount) }}</div></div>
+    </div>
+
+    <!-- 混合支付的收款构成：列表列宽只放得下「混合」两个字，每笔钱收在哪种方式上只能在这里看。
+         各行之和 = 应收 + 找零（现金行填的是递钞额），有找零时补一句说明免得以为算错了。 -->
+    <div v-if="detail.payments && detail.payments.length" class="sd-pays">
+      <span class="muted">支付构成</span>
+      <el-tag v-for="(p, i) in detail.payments" :key="i" size="small"
+              :type="p.payMethod === '赊账' ? 'danger' : 'info'">{{ p.payMethod }} {{ common.money(p.amount) }}</el-tag>
+      <span v-if="detail.changeAmount > 0" class="muted" style="font-size:12px;">现金行是递钞额，含找零</span>
     </div>
 
     <div class="sd-items">
@@ -364,6 +469,21 @@ function pageSetup(deps) {
   }
   // 优惠文案（特价 ¥4.72 / 8.8 折），只在生效时展示
   function promoTag(p) { return (p && p.promoActive && p.promoText) ? p.promoText : ''; }
+  // 优惠展示按档案类型分开：折扣型折率直接取档案 promoRate（折扣就是折扣），
+  // 特价型只报省了多少钱、不换算「等效折率」（特价就是特价）；无优惠返回空串。
+  // 省额 = 挂牌价 − 成交价，两个都是后端定死的两位小数，纯减法展示，不复刻促销舍入
+  function unitCut(origin, eff, promoType, promoRate) {
+    origin = Number(origin) || 0; eff = Number(eff) || 0;
+    if (origin <= 0 || eff <= 0 || eff >= origin) return null;
+    const rate = (promoType === '折扣' && Number(promoRate) > 0) ? fmtRate(promoRate) : '';
+    return { save: round2(origin - eff), rate };
+  }
+  // 组合成文案：unitSuffix 用于称重弹窗把「/斤」插在省额与折率之间
+  function cutText(origin, eff, promoType, promoRate, unitSuffix) {
+    const cut = unitCut(origin, eff, promoType, promoRate);
+    if (!cut) return '';
+    return '已优惠 ' + common.money(cut.save) + (unitSuffix || '') + (cut.rate ? '（' + cut.rate + '）' : '');
+  }
 
   function addProduct(p) {
     // 称重商品一律先弹称重窗输入重量，不直接入车
@@ -375,7 +495,9 @@ function pageSetup(deps) {
       cart.value.push({
         id: p.id, barcode: p.barcode, name: p.name,
         // salePrice = 成交单价（小计/合计/提交都用它）；originPrice 仅用于显示「原价 → 成交价」
+        // promoType/promoRate 原样取自档案：折扣型展示档案折率，特价型只显示省额
         salePrice: effOf(p), originPrice: Number(p.salePrice) || 0, promoText: promoTag(p),
+        promoType: p.promoType || '', promoRate: Number(p.promoRate) || 0,
         qty: 1, isWeighted: false, unit: p.unit || '',
       });
     }
@@ -428,6 +550,7 @@ function pageSetup(deps) {
       cart.value.push({
         id: p.id, barcode: p.barcode || '', name: p.name,
         salePrice: effOf(p), originPrice: Number(p.salePrice) || 0, promoText: promoTag(p),
+        promoType: p.promoType || '', promoRate: Number(p.promoRate) || 0,
         qty: Number(weighQty.value),
         isWeighted: true, unit: p.unit || '斤',
       });
@@ -476,6 +599,22 @@ function pageSetup(deps) {
   const creditRemark = ref('');
   const settling = ref(false);
 
+  // ---- 让利风控（限额 → 授权 → 留痕）----
+  // 收银台不让利（档案促销由商品档案定义、收银台只执行），唯一活着的让利口子是现金抹零。
+  // 抹零超限不拦死、而是要店主密码：前端只负责「提前告诉收银员 + 收密码」，
+  // 权威判定在服务端 —— 前端不给入口不等于接口不可用，手搓请求绕不过去那道门。
+  const saleLimits = ref({ maxOrderDiscount: 50, minDiscountRate: 9, maxRoundOff: 1 });
+  const discountAuthPwd = ref('');
+  // 三个限额是后加的配置项，老库里的 sale 组可能没有 → 缺失回退默认值（Number(undefined) 是 NaN）
+  function limitOf(v, fallback) { const n = Number(v); return isFinite(n) ? n : fallback; }
+  const maxRoundOff = computed(() => limitOf(saleLimits.value.maxRoundOff, 1));
+  async function loadSaleLimits() {
+    try {
+      const cfg = await api.get('/settings');
+      if (cfg && cfg.sale) saleLimits.value = cfg.sale;
+    } catch (e) {}
+  }
+
   // ⚠️ 必须与后端 Math.Round(x,2) 的银行家舍入（中点取偶）保持一致，不能用 JS 的 Math.round
   //    （中点向上），否则合计栏显示的数与后端落库的数会差 1 分。
   function round2(x) {
@@ -487,14 +626,97 @@ function pageSetup(deps) {
     return (lower % 2 === 0 ? lower : lower + 1) / 100;
   }
 
+  // 混合支付的两个状态声明放在这里（而不是下面的「结算 · 混合支付」小节）：
+  // 金额链要靠 mixedMode 判断「这单到底抹不抹零」，放下面会形成前向引用。
+  const mixedMode = ref(false);
+  const mixedRows = ref([]);
+
   // 金额链：商品总额（已含档案优惠）− 抹零 = 应收；应收 + 找零 ⇒ 递钞额
   const afterDiscount = computed(() => totalAmount.value);
-  const payAmount = computed(() => round2(Math.max(0, totalAmount.value - (roundOff.value || 0))));
+  // 实际生效的抹零 = 只有「单项支付 + 现金」才抹（混合支付恒不抹零、非现金单一律忽略），
+  // 与后端 CreateCoreAsync 的 isCash 判据同一套。**显示与上传必须共用这一个口径**，否则
+  // 「先填抹零、再切到微信或混合支付」会让屏幕上的应收比落库的应收少一个抹零 ——
+  // 顾客按屏幕上的数付钱，系统按另一套数记账；而 roundOffOverLimit 又会说「没超限，不用授权」。
+  const effectiveRoundOff = computed(() =>
+    (!mixedMode.value && payMethod.value === '现金') ? round2(roundOff.value || 0) : 0);
+  const payAmount = computed(() => round2(Math.max(0, totalAmount.value - effectiveRoundOff.value)));
   const changeAmount = computed(() => round2(Math.max(0, (cashReceived.value || 0) - payAmount.value)));
+
+  // ---- 结算 · 混合支付 ----
+  // 一笔单拆成多种收款方式：一行一个方式 + 金额。口径与后端 CreateCoreAsync 完全一致
+  // （前端只是预演，后端仍会按数据库价重算全部金额）：
+  //   · 已付金额 = Σ 各行；挂账额 = 应收 − 已付
+  //   · 非现金合计不得超过应收 —— 找零只能来自现金，否则等于「多扫了一笔微信又把现金找回去」
+  //   · 找零 = 已付 − 应收；混合模式不抹零（抹零是现金找零的产物，抹了会让「各行之和 = 应收 + 找零」失去落点）
+  //
+  // 「赊账」不在可选方式里：它不是一种收款渠道，而是「实收不足」推出来的结果 ——
+  // 没付够的那部分自动挂账（见下面的 mixedCredit），服务端也按同一个口径自己补一行「赊账」明细。
+  // 早前把它也做成一行可填的方式，等于让收银员用两种说法表达同一件事，还得自己保证两数相等；
+  // 收银台上已撤掉，接口层仍会核对显式传来的赊账行（UI 不给入口 ≠ 接口不可用，手搓请求要拦）。
+  const PAY_METHODS = ['现金', '微信', '支付宝'];
+
+  const mixedPaid = computed(() => round2(mixedRows.value
+    .reduce((s, r) => s + (Number(r.amount) || 0), 0)));
+  const mixedCashless = computed(() => round2(mixedPaid.value - mixedRows.value
+    .filter(r => r.method === '现金')
+    .reduce((s, r) => s + (Number(r.amount) || 0), 0)));
+  // 差额挂账：实收不足的部分自动记欠款（「付一部分 + 差额挂账」走的就是这条路径）
+  const mixedCredit = computed(() => {
+    const short = round2(payAmount.value - mixedPaid.value);
+    return short > 0 ? short : 0;
+  });
+  const mixedChange = computed(() => round2(Math.max(0, mixedPaid.value - payAmount.value)));
+
+  // 非现金合计超过应收 = 这组金额本身就是错的（找零只能来自现金）。
+  // 此时 mixedChange 会算出「找零 ¥5」——和同一屏的错误提示直接打架，所以显示层压成 —，
+  // 让错误提示单独说话。后端同样会拒这一单。
+  const mixedOverpaid = computed(() => mixedCashless.value > payAmount.value);
+
+  // 抹零是否越限：直接比「实际生效的抹零」——它与显示、上传、后端三处同源，
+  // 少一处对齐就会出现「前端要了密码后端没要」或反过来的别扭提示。
+  const roundOffOverLimit = computed(() => effectiveRoundOff.value > maxRoundOff.value);
+
+  // 拦截条件（后端还会再校验一遍，这里只是提前给收银员一个说法，别等他点完才报错）
+  const mixedError = computed(() => {
+    if (mixedCashless.value > payAmount.value)
+      return '非现金收款合计 ' + common.money(mixedCashless.value) + ' 不能超过应收金额 ' + common.money(payAmount.value);
+    return '';
+  });
+
+  // 可添加的方式 = 还没进列表的：三种方式各只允许一行（同一方式多行在后端会被合并，没有意义）
+  const usedPayMethods = computed(() => mixedRows.value.map(r => r.method));
+  const addableMethods = computed(() => PAY_METHODS.filter(m => usedPayMethods.value.indexOf(m) < 0));
+
+  // 主按钮文案跟着「这单到底收没收完钱」走，与后端 IsCredit 的判据（挂账额 > 0）一致
+  const settleButtonText = computed(() => {
+    const credit = mixedMode.value ? mixedCredit.value : (payMethod.value === '赊账' ? payAmount.value : 0);
+    return credit > 0 ? '确认结算' : '确认收款';
+  });
+
+  function enterMixed() {
+    mixedMode.value = true;
+    // 默认「现金 + 微信」两行（最常见的拆分），金额从 0 起，由收银员填数或点「全部」。
+    // 刻意不预填「现金 = 应收」：顾客改用微信付时，收银员忘改现金行就会变成「已付 = 应收 + 微信」。
+    mixedRows.value = [{ method: '现金', amount: 0 }, { method: '微信', amount: 0 }];
+  }
+  function addPayRow(m) { mixedRows.value.push({ method: m, amount: 0 }); }
+  function removePayRow(i) { mixedRows.value.splice(i, 1); }
+
+  // 全部 = 应收扣掉其他各行后的剩余；一半 = 剩余的一半；清零 = 0。
+  // 点「全部」得到的就是「让这一行把差额补齐」，差额补齐后就不再有挂账。
+  function fillPayRow(i, mode) {
+    const rows = mixedRows.value;
+    if (mode === 'clear') { rows[i].amount = 0; return; }
+    const others = rows.reduce((s, r, j) => j === i ? s : s + (Number(r.amount) || 0), 0);
+    const rest = round2(Math.max(0, payAmount.value - others));
+    rows[i].amount = mode === 'half' ? round2(rest / 2) : rest;
+  }
 
   function openSettle() {
     roundOff.value = 0; payMethod.value = '现金'; cashReceived.value = 0;
     wechatId.value = ''; creditPhone.value = ''; creditRemark.value = '';
+    mixedMode.value = false; mixedRows.value = [];
+    discountAuthPwd.value = '';   // 授权密码不复用：上一单店主打过的密码不能替下一单授权
     settleDialog.value = true;
   }
 
@@ -514,26 +736,51 @@ function pageSetup(deps) {
   }
 
   async function confirmSettle() {
-    if (payMethod.value === '现金' && (cashReceived.value || 0) < payAmount.value) { toast('收款金额不足', 'warning'); return; }
+    if (mixedMode.value) {
+      if (mixedError.value) { toast(mixedError.value, 'warning'); return; }
+      if (mixedPaid.value <= 0 && mixedCredit.value <= 0) { toast('请填写各支付方式的收款金额', 'warning'); return; }
+    } else if (payMethod.value === '现金' && (cashReceived.value || 0) < payAmount.value) {
+      toast('收款金额不足', 'warning'); return;
+    }
+    // 抹零超限先要密码：空着就提交只会被服务端打回来，不如当场说清楚
+    if (roundOffOverLimit.value && !discountAuthPwd.value) {
+      toast('抹零超出上限 ' + common.money(maxRoundOff.value) + '，请输入店主授权密码', 'warning'); return;
+    }
     settling.value = true;
     const isCash = payMethod.value === '现金';
-    const payload = {
+    // 收银台不提供任何折扣入口，整单优惠恒为 0；字段保留是为了与后端「总额 − 优惠 − 抹零 = 应收」口径对齐
+    const base = {
       items: cart.value.map(i => ({ productId: i.id, barcode: i.barcode, name: i.name, qty: i.qty, unitPrice: i.salePrice, subTotal: i.salePrice * i.qty })),
       totalAmount: totalAmount.value,
-      // 收银台不提供任何让利入口，整单优惠恒为 0；字段保留是为了与后端「总额 − 优惠 − 抹零 = 应收」口径对齐
       discountAmount: 0,
       discountRate: null,
-      roundOffAmount: isCash ? roundOff.value : 0,
+      discountAuthPassword: roundOffOverLimit.value ? discountAuthPwd.value : null,
+      // 抹零两种模式都从同一个 computed 取：混合支付时它恒为 0，非现金单同理
+      roundOffAmount: effectiveRoundOff.value,
       payAmount: payAmount.value,
-      payMethod: payMethod.value, cashAmount: isCash ? cashReceived.value : 0,
-      changeAmount: changeAmount.value, isCredit: payMethod.value === '赊账', wechatId: wechatId.value,
-      phone: creditPhone.value, remark: creditRemark.value
+      wechatId: wechatId.value, phone: creditPhone.value, remark: creditRemark.value,
     };
+    // 混合模式只传 payments：收款方式、收款额、找零、是否赊账全部由后端按明细重算（前端值一概不采信）
+    const payload = mixedMode.value
+      ? Object.assign({}, base, {
+          payMethod: '混合',
+          cashAmount: 0, changeAmount: 0,
+          isCredit: mixedCredit.value > 0,
+          payments: mixedRows.value
+            .filter(r => Number(r.amount) > 0)
+            .map(r => ({ payMethod: r.method, amount: Number(r.amount) })),
+        })
+      : Object.assign({}, base, {
+          payMethod: payMethod.value, cashAmount: isCash ? cashReceived.value : 0,
+          changeAmount: changeAmount.value, isCredit: payMethod.value === '赊账',
+        });
     try {
       const res = await api.post('/sales', payload);
-      toast((payMethod.value === '赊账' ? '已成功结算' : '收款成功') + '，单号 ' + res.orderNo, 'success');
+      const paidInFull = mixedMode.value ? mixedCredit.value <= 0 : payMethod.value !== '赊账';
+      toast((paidInFull ? '收款成功' : '已成功结算') + '，单号 ' + res.orderNo, 'success');
       cart.value = [];
       settleDialog.value = false;
+      mixedMode.value = false; mixedRows.value = [];
       focusScan();
     } catch (e) {}
     finally { settling.value = false; }
@@ -641,11 +888,11 @@ function pageSetup(deps) {
     if (ok) toast('已导出','success');
   }
 
-  onMounted(() => { focusScan(); loadOrders(); loadWeightedProducts(); });
+  onMounted(() => { focusScan(); loadOrders(); loadWeightedProducts(); loadSaleLimits(); });
 
   return {
     activeTab, rightTab, scanText, scanRef, cart, qtySummary, totalAmount,
-    onScanEnter, recompute, clearCart, focusScan, effOf, promoTag,
+    onScanEnter, recompute, clearCart, focusScan, effOf, promoTag, cutText,
     weightedProducts, weightedGroups, loadWeightedProducts,
     weighDialog, weighProduct, weighQty, weighInputRef, openWeighDialog, focusWeighInput, confirmWeigh,
     parked, parkOrder, restorePark,
@@ -653,6 +900,9 @@ function pageSetup(deps) {
     settleDialog, fmtRate,
     roundOff, afterDiscount, payMethod, cashReceived, wechatId, creditPhone, creditRemark, settling,
     payAmount, changeAmount, openSettle, recomputePay, onSettleClosed, confirmSettle, roundOffToJiao,
+    roundOffOverLimit, maxRoundOff, discountAuthPwd, loadSaleLimits,
+    mixedMode, mixedRows, mixedPaid, mixedCredit, mixedChange, mixedOverpaid, mixedError,
+    addableMethods, settleButtonText, enterMixed, addPayRow, removePayRow, fillPayRow,
     orders, ordersLoading, orderKeyword, dateFrom, dateTo, payMethodFilter,
     orderPage, orderPageSize, orderTotal, loadOrders, searchOrders, orderSummaryInfo, orderSummary,
     detailDialog, detail, openDetail, savedOf, rateOf,

@@ -17,6 +17,14 @@
       <div class="table-wrap">
         <el-table :data="items" border size="small">
           <el-table-column label="商品" prop="name" min-width="160" />
+          <!-- 成交价是退款的计算依据（退款额 = 成交价 × 退货数量）；有档案让利时把挂牌价一并给出，
+               否则「退款额为什么低于原价合计」在这一页没有答案。 -->
+          <el-table-column label="成交价" width="150">
+            <template #default="{ row }">
+              {{ common.money(row.unitPrice) }}
+              <span v-if="row.originalPrice > row.unitPrice" class="muted" style="font-size:12px;">原价 {{ common.money(row.originalPrice) }}</span>
+            </template>
+          </el-table-column>
           <el-table-column label="原数量" prop="qty" width="100" />
           <el-table-column label="可退" width="100"><template #default="{ row }">{{ row.qty - (row.returnedQty||0) }}</template></el-table-column>
           <el-table-column label="退货数量" width="160"><template #default="{ row }"><el-input-number v-model="row.returnQty" :min="0" :max="row.qty - (row.returnedQty||0)" size="small" controls-position="right" /></template></el-table-column>

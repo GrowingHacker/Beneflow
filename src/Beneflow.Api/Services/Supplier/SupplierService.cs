@@ -12,7 +12,7 @@ public class SupplierService : ISupplierService
     private readonly AppDbContext _db;
     public SupplierService(AppDbContext db) => _db = db;
 
-    public async Task<PagedResult<object>> ListAsync(string? keyword, int page, int pageSize)
+    public async Task<PagedResult<SupplierListItemDto>> ListAsync(string? keyword, int page, int pageSize)
     {
         var q =
             from s in _db.Suppliers.AsNoTracking()
@@ -29,34 +29,35 @@ public class SupplierService : ISupplierService
         page = Math.Max(1, page);
         var rows = await q.OrderBy(s => s.Id)
             .Skip((page - 1) * pageSize).Take(pageSize).ToListAsync();
-        var list = rows.Select(s => (object)new
+        var list = rows.Select(s => new SupplierListItemDto
         {
-            id = s.Id, name = s.Name, contact = s.Contact, phone = s.Phone,
-            address = s.Address, remark = s.Remark ?? "", status = s.Status ? "启用" : "停用",
-            totalAmount = Math.Round(s.TotalAmount, 2),          // 累计采购金额
-            lastDate = s.LastDate?.ToString("yyyy-MM-dd"),       // 最近供货时间
-            hasPurchase = s.HasPurchase,                         // 是否已有采购记录（决定能否删除）
-            createdAt = "",
+            Id = s.Id, Name = s.Name, Contact = s.Contact, Phone = s.Phone,
+            Address = s.Address, Remark = s.Remark ?? "", Status = s.Status ? "启用" : "停用",
+            TotalAmount = Math.Round(s.TotalAmount, 2),          // 累计采购金额
+            LastDate = s.LastDate?.ToString("yyyy-MM-dd"),       // 最近供货时间
+            HasPurchase = s.HasPurchase,                         // 是否已有采购记录（决定能否删除）
+            CreatedAt = "",
         }).ToList();
-        return new PagedResult<object> { List = list, Total = total, Page = page, PageSize = pageSize };
+        return new PagedResult<SupplierListItemDto> { List = list, Total = total, Page = page, PageSize = pageSize };
     }
 
-    public async Task<ApiResult<object>> GetAsync(int id)
+    public async Task<ApiResult<SupplierDetailDto>> GetAsync(int id)
     {
         var s = await _db.Suppliers.FindAsync(id);
-        if (s == null) return ApiResult<object>.Fail("供应商不存在");
-        return ApiResult<object>.Ok(new { id = s.Id, name = s.Name, contact = s.Contact, phone = s.Phone, address = s.Address, remark = s.Remark, status = s.Status ? "启用" : "停用" });
+        if (s == null) return ApiResult<SupplierDetailDto>.Fail("供应商不存在");
+        return ApiResult<SupplierDetailDto>.Ok(new SupplierDetailDto
+            { Id = s.Id, Name = s.Name, Contact = s.Contact, Phone = s.Phone, Address = s.Address, Remark = s.Remark, Status = s.Status ? "启用" : "停用" });
     }
 
-    public async Task<ApiResult<object>> CreateAsync(SupplierUpsertDto dto)
+    public async Task<ApiResult<IdResultDto>> CreateAsync(SupplierUpsertDto dto)
     {
         dto.Name = dto.Name?.Trim() ?? "";
-        if (dto.Name.Length == 0) return ApiResult<object>.Fail("请填写供应商名称");
-        if (await _db.Suppliers.AnyAsync(s => s.Name == dto.Name)) return ApiResult<object>.Fail("供应商名称已存在");
+        if (dto.Name.Length == 0) return ApiResult<IdResultDto>.Fail("请填写供应商名称");
+        if (await _db.Suppliers.AnyAsync(s => s.Name == dto.Name)) return ApiResult<IdResultDto>.Fail("供应商名称已存在");
         var s = new Supplier { Name = dto.Name, Contact = dto.Contact, Phone = dto.Phone, Address = dto.Address, Remark = dto.Remark, Status = dto.Status };
         _db.Suppliers.Add(s);
         await _db.SaveChangesAsync();
-        return ApiResult<object>.Ok(new { id = s.Id });
+        return ApiResult<IdResultDto>.Ok(new IdResultDto { Id = s.Id });
     }
 
     public async Task<ApiResult> UpdateAsync(int id, JsonElement body)

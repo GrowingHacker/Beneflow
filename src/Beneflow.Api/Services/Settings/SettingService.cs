@@ -62,7 +62,10 @@ public partial class SettingService : ISettingService
         var defaults = new Dictionary<string, object?>
         {
             ["shop"] = new { name = "百惠通便利店", phone = "020-88888888", address = "中山市东区XX路1号", logo = "" },
-            ["sale"] = new { allowCredit = true, defaultPayMethod = "现金" },
+            // maxOrderDiscount / minDiscountRate / maxRoundOff = 让利限额（收银台让利风控，超限需店主授权）。
+            // 抹零上限取 ¥1 是有依据的：抹零抹的是金额的角分零头，抹到「元」为止最多也不超过 ¥0.99，
+            // 所以 ¥1 恰好是「只允许抹零头」这条线，超过它就不是抹零而是让利了。
+            ["sale"] = new { allowCredit = true, defaultPayMethod = "现金", maxOrderDiscount = 50m, minDiscountRate = 9m, maxRoundOff = 1m },
             ["receipt"] = new { header = "百惠通便利店", footer = "欢迎再次光临", autoPrint = false },
             ["stock"] = new { warningThreshold = 1, expiryDays = 30 },
             ["units"] = new[] { "个", "瓶", "盒", "箱", "袋", "包", "罐", "听", "支", "条", "桶", "杯", "份", "块", "双", "张", "斤", "千克", "克", "升", "毫升" },

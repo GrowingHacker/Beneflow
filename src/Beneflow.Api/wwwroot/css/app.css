@@ -256,6 +256,16 @@ body {
 /* 控件右侧的短说明：只放「几个字」的补充，长了会把该行撑高、与邻列错行 */
 .form-hint-inline { font-size: 12px; margin-left: 6px; }
 
+/* 条码联网反查的一行提示（商品档案→新增）。
+   左缩进 90px 是**量出来的**：正好与输入框左边界对齐（= 该表单的 label-width）。
+   别再用「label-width + label 右内边距」去推算，那个推不出 90。
+   单独占一行而不是塞进条码那一格：格内可用宽度只有 208px，40 字提示会折成 3 行（该行高 90px，其他行 32px）。 */
+.bc-tip { margin: 0 0 4px 90px; font-size: 12px; line-height: 18px; }
+
+/* 表单项里输入框下方的补充说明（收银台「店主授权」、系统设置的让利限额说明）。
+   与 .bc-tip 的区别：这个已经在 el-form-item 的字段列里了，不需再左缩进对齐 label。 */
+.form-tip { font-size: 12px; line-height: 18px; margin-top: 4px; }
+
 /* 输入框内的单位后缀（如「折」「元」）：默认行高会把 el-input 撑到 34px，
    与同排 32px 的字段差 2px。line-height:1 让它不参与 wrapper 的高度计算。 */
 .el-input__suffix .unit-text { font-size: 12px; line-height: 1; color: #909399; }
@@ -348,6 +358,22 @@ body {
 .sd-items-title .muted { font-size: 12px; font-weight: 400; }
 /* 「无数据」占位：与 el-table 的单元格同色，别在页面里另写行内灰 */
 .sd-dim { color: #999; }
+
+/* ===== 结算弹窗 · 混合支付 =====
+   一行一个支付方式：方式名 + 金额 + 全部/一半/清零 + 删除。
+   `.el-button + .el-button { margin-left: 12px }` 是 Element Plus 的默认相邻间距，
+   一行里放 4 个文字按钮时会把这行撑爆（实测 4 按钮 + 输入框 > 弹窗内容宽），故归零。 */
+.pay-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.pay-row-name { flex: none; width: 88px; font-size: 13px; color: #303133; }
+.pay-row .el-button + .el-button { margin-left: 0; }
+
+/* 结算弹窗底部：混合支付按钮靠左，「取消 / 确认收款」靠右 */
+.settle-foot { display: flex; align-items: center; }
+.settle-spacer { flex: 1; }
+
+/* 销售单详情 · 混合支付的收款构成（一行 tag：现金 ¥10.00 / 微信 ¥7.00） */
+.sd-pays { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 12px 0 2px; }
+.sd-pays .muted { font-size: 12px; }
 
 /* ===== 弹窗里的长文本换行 =====
    备份/还原失败时会把 SQL Server 的原始报错整段塞进 MessageBox，里面常带

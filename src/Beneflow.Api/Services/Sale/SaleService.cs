@@ -153,6 +153,12 @@ public partial class SaleService : ISaleService
             var cs = await _db.CreditSales.AsNoTracking().Where(c => c.SaleOrderId == o.Id).Select(c => (bool?)c.Status).FirstOrDefaultAsync();
             if (cs.HasValue) settled = cs;
         }
+        // 混合支付的收款构成（单项支付没有明细行，前端按 PayMethod 显示即可）
+        var payments = await _db.SaleOrderPayments.AsNoTracking()
+            .Where(p => p.OrderId == o.Id)
+            .OrderBy(p => p.Id)
+            .Select(p => new { payMethod = p.PayMethod, amount = p.Amount })
+            .ToListAsync();
         return new
         {
             id = o.Id, orderNo = o.OrderNo,
@@ -166,6 +172,7 @@ public partial class SaleService : ISaleService
             isCredit = o.IsCredit, creditSettled = settled, wechatId = o.WechatId,
             createdAt = o.CreatedAt.ToString("yyyy-MM-dd HH:mm"), createdByName = userName ?? "",
             items = details,
+            payments = payments,
         };
     }
 
@@ -175,6 +182,8 @@ public partial class SaleService : ISaleService
 
     /// <summary>
     /// 收银结算：校验库存 → 扣库存（快照成本价）→ 写流水；赊账同时生成 CreditSale 欠款记录。
+    /// 支持单项支付（<see cref="CreateSaleDto.Payments"/> 为空）与混合支付（非空）两种形态，
+    /// 后者一笔单可拆多种收款方式、实收不足的部分自动挂账，明细落 <see cref="SaleOrderPayment"/>。
     /// 整个过程持有「单据号锁 + 相关商品库存锁」，防止并发收银丢更新 / 单号撞车。
     /// </summary>
     public async Task<ApiResult<object>> CreateAsync(CreateSaleDto dto)
@@ -207,25 +216,15 @@ public partial class SaleService : ISaleService
                 return ApiResult<object>.Fail($"商品数量必须为整数（称重商品才允许小数）");
         }
 
-        // 系统设置是否允许赊账
-        var saleConfigJson = await _db.SystemConfigs.AsNoTracking()
-            .Where(c => c.ConfigKey == "sale").Select(c => c.ConfigValue).FirstOrDefaultAsync();
-        var allowCredit = true; // 默认允许
-        if (!string.IsNullOrEmpty(saleConfigJson))
-        {
-            try
-            {
-                using var doc = System.Text.Json.JsonDocument.Parse(saleConfigJson);
-                if (doc.RootElement.TryGetProperty("allowCredit", out var prop)
-                    && prop.ValueKind == System.Text.Json.JsonValueKind.False)
-                {
-                    allowCredit = false;
-                }
-            }
-            catch { /* JSON 解析失败时默认允许赊账，不影响正常使用 */ }
-        }
-        if (dto.IsCredit && !allowCredit)
+        // 系统设置：是否允许赊账 + 让利限额（同一条 sale 配置，一次读出来）
+        var saleCfg = await ReadSaleConfigAsync();
+        if (dto.IsCredit && !saleCfg.AllowCredit)
             return ApiResult<object>.Fail("系统设置不允许赊账，请更换收款方式");
+
+        // 让利风控：限额 → 授权 → 留痕。**放在事务之前** —— 拒绝时写的日志才不会被事务回滚掉，
+        // 而且不必先开事务、查一遍商品、再白回滚一次（判定只看 dto，不需要商品数据）。
+        var fence = await CheckDiscountFenceAsync(dto, saleCfg.Limits);
+        if (!fence.Pass) return ApiResult<object>.Fail(fence.Message);
 
         await using var tx = await _db.Database.BeginTransactionAsync();
         try
@@ -307,8 +306,11 @@ public partial class SaleService : ISaleService
             var afterDiscount = Math.Round(listAmount - discountAmount, 2);
             if (afterDiscount < 0) afterDiscount = 0;
 
-            // 5. 抹零金额：行业惯例只对现金抹零，且不超过折后金额
-            var isCash = dto.PayMethod == "现金";
+            // 5. 抹零金额：行业惯例只对现金抹零，且不超过折后金额。
+            //    混合支付不设抹零入口（dto.Payments 非空即强制 0）：抹零是「现金找零不方便」的产物，
+            //    混合模式的金额是各行凑出来的，抹零会让「各行之和 = 应收 + 找零」这条恒等式失去落点。
+            var isMixed = dto.Payments is { Count: > 0 };
+            var isCash = !isMixed && dto.PayMethod == "现金";
             var roundOffAmount = isCash ? Math.Round(dto.RoundOffAmount, 2) : 0m;
             if (roundOffAmount < 0) roundOffAmount = 0;
             if (roundOffAmount > afterDiscount) roundOffAmount = afterDiscount;
@@ -317,16 +319,80 @@ public partial class SaleService : ISaleService
             var payAmount = Math.Round(afterDiscount - roundOffAmount, 2);
             if (payAmount < 0) payAmount = 0;
 
-            // 7. 收款额与找零：收款额仅现金单有意义（顾客递出的钱），非现金严格记 0
-            var cashAmount = isCash ? Math.Round(dto.CashAmount, 2) : 0m;
-            if (isCash && cashAmount < payAmount)
-                return ApiResult<object>.Fail($"收款金额不足（应收 ¥{payAmount}）");
-            var changeAmount = isCash ? Math.Round(cashAmount - payAmount, 2) : 0m;
-            if (changeAmount < 0) changeAmount = 0;
+            // 7~9. 收款方式 / 收款额 / 找零 / 实收 / 挂账额：单项与混合两条路，最后落成同一组字段
+            string payMethod;
+            decimal cashAmount, changeAmount, receivedAmount, creditAmount;   // creditAmount = 挂账额（没收到的那部分）
+            // 落库的支付组成：≥2 行才写 SaleOrderPayments（单项支付不落行，收款方式一个字段就说清了）
+            var paymentRows = new List<(string Method, decimal Amount)>();
 
-            // 8. 实收金额 = 实际收到的净额：现金/微信/支付宝即应收；赊账为挂账，开单时实收 0
-            //    （后续每笔还款累加到该单实收上，见 SaleService.Credit.SettleAsync）
-            var receivedAmount = dto.IsCredit ? 0m : payAmount;
+            if (isMixed)
+            {
+                // ===== 混合支付 =====
+                // 先按支付方式合并（同一方式多行相加）、剔除金额为 0 的行
+                var byMethod = new Dictionary<string, decimal>();
+                foreach (var p in dto.Payments!)
+                {
+                    var m = (p.PayMethod ?? "").Trim();
+                    if (m.Length == 0) return ApiResult<object>.Fail("支付方式不能为空");
+                    if (!SupportedPayMethods.Contains(m)) return ApiResult<object>.Fail($"不支持的支付方式：{m}");
+                    var amt = Math.Round(p.Amount, 2);
+                    if (amt < 0) return ApiResult<object>.Fail($"「{m}」的收款金额不能为负数");
+                    if (amt == 0) continue;
+                    byMethod[m] = byMethod.TryGetValue(m, out var old) ? old + amt : amt;
+                }
+                if (byMethod.Count == 0) return ApiResult<object>.Fail("请填写各支付方式的收款金额");
+
+                // 「赊账」行不是收到的钱，单独拎出来；剩下各行才是实收
+                var declaredCredit = byMethod.TryGetValue(CreditPayMethod, out var dc) ? dc : 0m;
+                byMethod.Remove(CreditPayMethod);
+                var cashPart = byMethod.TryGetValue("现金", out var cp) ? cp : 0m;
+                var paidTotal = Math.Round(byMethod.Values.Sum(), 2);          // 实收合计（不含挂账）
+                var cashlessTotal = Math.Round(paidTotal - cashPart, 2);       // 非现金实收合计
+
+                // 找零只能来自现金：非现金部分超过应收，等于「多扫了一笔微信又把现金找回去」，不合业务
+                if (cashlessTotal > payAmount)
+                    return ApiResult<object>.Fail($"非现金收款合计 ¥{cashlessTotal} 不能超过应收金额 ¥{payAmount}");
+                changeAmount = Math.Max(0, Math.Round(paidTotal - payAmount, 2));
+
+                // 差额挂账：实收不足的部分自动转成欠款（「付一部分 + 差额挂账」就是这条路径）。
+                // 显式填了「赊账」行时以该行为准，并要求与差额一致——否则「已收 + 挂账」对不上应收，
+                // 等于把差额凭空吞掉，账面上看不出来。
+                var shortfall = Math.Round(payAmount - paidTotal, 2);
+                if (declaredCredit > 0 && shortfall <= 0)
+                    return ApiResult<object>.Fail($"已收 ¥{paidTotal} 已达到应收 ¥{payAmount}，无需再挂账");
+                creditAmount = shortfall > 0 ? shortfall : 0m;
+                if (declaredCredit > 0 && declaredCredit != creditAmount)
+                    return ApiResult<object>.Fail($"支付金额与应收不符：已收 ¥{paidTotal} + 挂账 ¥{declaredCredit} ≠ 应收 ¥{payAmount}");
+                if (creditAmount > 0 && !saleCfg.AllowCredit)
+                    return ApiResult<object>.Fail("系统设置不允许赊账，请更换收款方式");
+
+                cashAmount = Math.Round(cashPart, 2);                          // 现金行填的是递钞额，可大于应收
+                receivedAmount = Math.Round(paidTotal - changeAmount, 2);      // 实收 = 收到的钱 − 找零
+
+                foreach (var kv in byMethod) paymentRows.Add((kv.Key, Math.Round(kv.Value, 2)));
+                if (creditAmount > 0) paymentRows.Add((CreditPayMethod, creditAmount));
+
+                // 落库口径：只剩一种方式且没挂账就记那一种（与单项支付一致），否则记「混合」
+                payMethod = paymentRows.Count >= 2 ? MixedPayMethod : paymentRows[0].Method;
+            }
+            else
+            {
+                // ===== 单项支付（原逻辑，一字未改） =====
+                payMethod = dto.PayMethod;
+                cashAmount = isCash ? Math.Round(dto.CashAmount, 2) : 0m;
+                if (isCash && cashAmount < payAmount)
+                    return ApiResult<object>.Fail($"收款金额不足（应收 ¥{payAmount}）");
+                changeAmount = isCash ? Math.Round(cashAmount - payAmount, 2) : 0m;
+                if (changeAmount < 0) changeAmount = 0;
+
+                // 实收金额 = 实际收到的净额：现金/微信/支付宝即应收；赊账为挂账，开单时实收 0
+                // （后续每笔还款累加到该单实收上，见 SaleService.Credit.SettleAsync）
+                creditAmount = dto.IsCredit ? payAmount : 0m;
+                receivedAmount = dto.IsCredit ? 0m : payAmount;
+            }
+
+            // 是否赊账由「挂账额」决定：单项赊账=全额应收，混合支付=差额（第 196 行已把 PayMethod=赊账单的 IsCredit 置位）
+            var isCredit = creditAmount > 0;
 
             var so = new SaleOrder
             {
@@ -337,16 +403,24 @@ public partial class SaleService : ISaleService
                 RoundOffAmount = roundOffAmount,
                 PayAmount = payAmount,
                 ReceivedAmount = receivedAmount,
-                PayMethod = dto.PayMethod,
+                PayMethod = payMethod,
                 CashAmount = cashAmount,
                 ChangeAmount = changeAmount,
-                IsCredit = dto.IsCredit,
-                WechatId = dto.IsCredit ? (string.IsNullOrWhiteSpace(dto.WechatId) ? null : dto.WechatId!.Trim()) : null,
+                IsCredit = isCredit,
+                WechatId = isCredit ? (string.IsNullOrWhiteSpace(dto.WechatId) ? null : dto.WechatId!.Trim()) : null,
                 Remark = dto.Remark,
                 CreatedBy = _me.Id, CreatedAt = DateTime.Now,
             };
             _db.SaleOrders.Add(so);
             await _db.SaveChangesAsync();
+
+            // 混合支付落支付明细（一行一个方式）。恒等式：Σ Amount = 应收 + 找零
+            if (paymentRows.Count >= 2)
+            {
+                foreach (var (method, amount) in paymentRows)
+                    _db.SaleOrderPayments.Add(new SaleOrderPayment
+                    { OrderId = so.Id, PayMethod = method, Amount = amount });
+            }
 
             foreach (var (p, qty, unitPrice, originalPrice, subTotal) in detailList)
             {
@@ -373,15 +447,15 @@ public partial class SaleService : ISaleService
                 });
             }
 
-            // 赊账欠款记录
-            if (dto.IsCredit)
+            // 赊账欠款记录：欠款额 = 挂账额（单项赊账即全额应收，混合支付是「付剩下的差额」）
+            if (isCredit)
             {
                 _db.CreditSales.Add(new CreditSale
                 {
                     SaleOrderId = so.Id, WechatId = string.IsNullOrWhiteSpace(dto.WechatId) ? "" : dto.WechatId!.Trim(),
                     Phone = string.IsNullOrWhiteSpace(dto.Phone) ? null : dto.Phone!.Trim(),
                     Remark = string.IsNullOrWhiteSpace(dto.Remark) ? null : dto.Remark!.Trim(),
-                    CreditAmount = so.PayAmount, PaidAmount = 0, RemainingAmount = so.PayAmount,
+                    CreditAmount = creditAmount, PaidAmount = 0, RemainingAmount = creditAmount,
                     Status = false, CreatedAt = so.CreatedAt,
                 });
             }
@@ -391,9 +465,12 @@ public partial class SaleService : ISaleService
             {
                 UserId = _me.Id, UserName = _me.Username, IpAddress = _me.ClientIp, Module = "销售管理",
                 Action = "收银结算",
-                // 按折率录入的单独记一笔折数，便于事后区分「按折扣让利」与「手工抹了个数」
-                Target = $"{orderNo} 应收 ¥{so.PayAmount}，实收 ¥{so.ReceivedAmount}（{so.PayMethod}）"
-                         + (discountRate.HasValue ? $"，折扣 {discountRate.Value:0.##} 折" : ""),
+                // 混合支付把每一行的方式与金额都写进日志：事后查一笔钱收在哪，不能只看到「混合」两个字。
+                // 按折率录入的另外记一笔折数，便于区分「按折扣让利」与「手工抹了个数」；
+                // 让利超限的补一笔授权说明 —— 事后要能看出这单的让利是「常规额度内」还是「谁授权放行的」。
+                Target = $"{orderNo} 应收 ¥{so.PayAmount}，实收 ¥{so.ReceivedAmount}（{PayComposition(payMethod, paymentRows)}）"
+                         + (discountRate.HasValue ? $"，折扣 {discountRate.Value:0.##} 折" : "")
+                         + (fence.AuthorizedNote is { } authNote ? $"，超额让利已授权（{authNote}）" : ""),
             });
             await _db.SaveChangesAsync();
             await tx.CommitAsync();
@@ -405,6 +482,17 @@ public partial class SaleService : ISaleService
             throw new InvalidOperationException("创建销售单失败：" + ex.Message, ex);
         }
     }
+
+    /// <summary>销售单支付明细 / 收款方式的取值约定，见 <see cref="SaleOrderPayment"/> 与 <see cref="SaleOrder.PayMethod"/>。</summary>
+    private const string CreditPayMethod = "赊账";
+    private const string MixedPayMethod = "混合";
+    private static readonly HashSet<string> SupportedPayMethods = new() { "现金", "微信", "支付宝", CreditPayMethod };
+
+    /// <summary>日志里的收款口径：混合支付展开成「混合：现金 ¥10.00 + 赊账 ¥7.00」，单项支付就写方式名</summary>
+    private static string PayComposition(string payMethod, List<(string Method, decimal Amount)> rows) =>
+        rows.Count >= 2
+            ? $"{MixedPayMethod}：" + string.Join(" + ", rows.Select(r => $"{r.Method} ¥{r.Amount:0.00}"))
+            : payMethod;
 
     /// <summary>作废销售单：回补库存、写流水、同步作废赊账记录；已发生退货的订单不允许作废。</summary>
     public async Task<ApiResult> VoidAsync(int id)

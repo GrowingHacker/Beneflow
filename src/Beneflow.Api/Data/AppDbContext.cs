@@ -32,6 +32,7 @@ public class AppDbContext : DbContext
     public DbSet<PurchaseReturnDetail> PurchaseReturnDetails => Set<PurchaseReturnDetail>();
     public DbSet<SaleOrder> SaleOrders => Set<SaleOrder>();
     public DbSet<SaleOrderDetail> SaleOrderDetails => Set<SaleOrderDetail>();
+    public DbSet<SaleOrderPayment> SaleOrderPayments => Set<SaleOrderPayment>();
     public DbSet<SaleReturn> SaleReturns => Set<SaleReturn>();
     public DbSet<SaleReturnDetail> SaleReturnDetails => Set<SaleReturnDetail>();
     public DbSet<CreditSale> CreditSales => Set<CreditSale>();

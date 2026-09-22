@@ -1,4 +1,5 @@
 <div>
+  <!-- 上半：按进货单挑商品退货 -->
   <div class="page-card">
     <div class="toolbar">
       <span>供应商：</span>
@@ -27,6 +28,45 @@
       </div>
     </div>
   </div>
+
+  <!-- 下半：退货记录（作废入口在这里 —— 退货单是「已退款给供应商」的凭证，
+       退款本身没法自动抹掉，所以只把库存补回来、把单据标掉，不再参与供应商对账） -->
+  <div class="page-card">
+    <div class="toolbar">
+      <el-input v-model="keyword" placeholder="退货单号 / 供应商" clearable style="width:220px;" @keyup.enter="search" />
+      <el-button type="primary" @click="search">查询</el-button>
+    </div>
+    <div class="table-wrap">
+      <el-table :data="records" v-loading="loading" border size="small"
+                :show-summary="records.length > 0" :summary-method="recordSummary">
+        <el-table-column label="单号" prop="orderNo" width="160" />
+        <el-table-column label="供应商" prop="supplierName" width="150" />
+        <el-table-column label="状态" width="90" align="center">
+          <template #default="{ row }">
+            <el-tag v-if="row.isVoided" type="info" size="small">已作废</el-tag>
+            <el-tag v-else type="success" size="small">已退货</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="应退金额" width="110"><template #default="{ row }">{{ common.money(row.refundAmount) }}</template></el-table-column>
+        <el-table-column label="退货原因" prop="reason" min-width="140" show-overflow-tooltip />
+        <el-table-column label="操作人" prop="createdByName" width="100" />
+        <el-table-column label="日期" prop="createdAt" width="160" />
+        <el-table-column label="操作" width="80" fixed="right" align="center">
+          <template #default="{ row }">
+            <div class="op-btns">
+              <el-button v-if="!row.isVoided" text type="danger" title="作废" @click="doVoid(row)"><el-icon><Delete /></el-icon></el-button>
+              <span v-else class="muted">—</span>
+            </div>
+          </template>
+        </el-table-column>
+      </el-table>
+    </div>
+    <div class="pagination-wrap">
+      <el-pagination
+        v-model:current-page="page" v-model:page-size="pageSize" :total="total"
+        :page-sizes="[10,20,50]" layout="total, sizes, prev, pager, next" @size-change="load" @current-change="load" />
+    </div>
+  </div>
 </div>
 
 <script page-setup>
@@ -37,6 +77,21 @@ function pageSetup(deps) {
   const supplierId = ref(null); const orderId = ref(null);
   const items = ref([]); const submitting = ref(false);
   const returnTotal = computed(() => items.value.reduce((s,i)=>s+Number(i.returnQty||0)*Number(i.costPrice||0),0));
+
+  // ---- 退货记录 ----
+  const records = ref([]); const loading = ref(false);
+  const keyword = ref(''); const page = ref(1); const pageSize = ref(20); const total = ref(0);
+  // 合计走后端「同查询条件的全量合计（剔除已作废）」，不是当前页合计
+  const summaryInfo = ref(null);
+
+  // el-table 合计行：只映射金额列，其余留空；标签固定说明口径
+  function recordSummary({ columns }) {
+    const s = summaryInfo.value || {};
+    return columns.map((col, i) => {
+      if (i === 0) return `合计 ${s.returns || 0} 笔（不含已作废）`;
+      return col.label === '应退金额' ? common.money(s.refundAmount || 0) : '';
+    });
+  }
 
   async function loadSuppliers() { try { const r = await api.get('/suppliers', { params: { pageSize: 200 } }); suppliers.value = r.list||[]; } catch(e){} }
   async function loadOrders() {
@@ -56,10 +111,43 @@ function pageSetup(deps) {
     if (!sel.length) { toast('请填写退货数量','warning'); return; }
     try { await confirm('确认提交采购退货？'); } catch(e){ return; }
     submitting.value = true;
-    try { const res = await api.post('/purchase-returns', { supplierId: supplierId.value, items: sel.map(i => ({ productId: i.productId, qty: i.returnQty, costPrice: i.costPrice })), returnTotal: returnTotal.value }); toast('退货成功：' + res.orderNo, 'success'); orderId.value = null; items.value = []; } catch(e){}
+    try {
+      const res = await api.post('/purchase-returns', { supplierId: supplierId.value, items: sel.map(i => ({ productId: i.productId, qty: i.returnQty, costPrice: i.costPrice })), returnTotal: returnTotal.value });
+      toast('退货成功：' + res.orderNo, 'success');
+      // 提交完就把选择器清掉，避免重复点「提交退货」再建一张同样的单
+      orderId.value = null; items.value = [];
+      page.value = 1; load();
+    } catch(e){}
     finally { submitting.value = false; }
   }
-  onMounted(loadSuppliers);
-  return { suppliers, orders, supplierId, orderId, items, submitting, returnTotal, loadOrders, loadDetail, submit, common, toast };
+
+  async function load() {
+    loading.value = true;
+    try {
+      const res = await api.get('/purchase-returns', { params: { keyword: keyword.value, page: page.value, pageSize: pageSize.value } });
+      records.value = res.list || []; total.value = res.total || 0;
+      summaryInfo.value = res.summary || null;
+    } catch(e){}
+    finally { loading.value = false; }
+  }
+  function search() { page.value = 1; load(); }
+
+  async function doVoid(row) {
+    try {
+      await confirm(`确认作废退货单「${row.orderNo}」？作废后库存将回补，该单不再计入供应商对账，且不可恢复。`);
+    } catch(e) { return; }
+    try {
+      await api.post('/purchase-returns/' + row.id + '/void');
+      toast('已作废', 'success');
+      load();
+    } catch(e){}
+  }
+
+  onMounted(() => { loadSuppliers(); load(); });
+  return {
+    suppliers, orders, supplierId, orderId, items, submitting, returnTotal,
+    records, loading, keyword, page, pageSize, total, summaryInfo, recordSummary,
+    loadOrders, loadDetail, submit, load, search, doVoid, common, toast,
+  };
 }
 </script>

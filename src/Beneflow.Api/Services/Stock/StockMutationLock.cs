@@ -27,24 +27,52 @@ public sealed class StockMutationLock
     private const int BucketCount = 64;
 
     // 静态字段：保证互斥量在不同 DI 作用域（不同请求）之间共享。
-    private static readonly SemaphoreSlim[] Buckets = CreateBuckets();
+    private static readonly SemaphoreSlim[] SharedBuckets = CreateBuckets(BucketCount);
 
     // 单据号分配专用锁。单号形如 {前缀}{yyyyMMdd}{当日序号}，序号由「今日单据数」推导，
     // 并发下两个请求会算出同一个序号，撞 OrderNo 唯一索引后抛异常返回 500。
     // 由于序号来自已提交的行数，只在「算号」这一瞬间加锁并不够——必须把
     // 「算号 → 落库提交」整段一起串行，因此这把锁会覆盖整个建单过程。
     // 便利店单机收银的写入量极低，串行建单没有性能问题。
-    private static readonly SemaphoreSlim OrderNoGate = new(1, 1);
+    private static readonly SemaphoreSlim SharedOrderNoGate = new(1, 1);
 
-    private static SemaphoreSlim[] CreateBuckets()
+    private readonly SemaphoreSlim[] _buckets;
+    private readonly SemaphoreSlim _orderNoGate;
+
+    /// <summary>
+    /// 生产用构造：<b>所有实例共享同一组互斥量</b>，这正是「跨 DI 作用域互斥」的来源
+    /// （锁注册为单例；即使将来被改成作用域内实例，共享互斥量也能继续保证互斥）。
+    /// </summary>
+    public StockMutationLock() : this(SharedBuckets, SharedOrderNoGate) { }
+
+    private StockMutationLock(SemaphoreSlim[] buckets, SemaphoreSlim orderNoGate)
     {
-        var arr = new SemaphoreSlim[BucketCount];
-        for (var i = 0; i < BucketCount; i++) arr[i] = new SemaphoreSlim(1, 1);
+        _buckets = buckets;
+        _orderNoGate = orderNoGate;
+    }
+
+    /// <summary>
+    /// <b>测试专用</b>：造一个自带一组独立互斥量的实例。
+    ///
+    /// <para>
+    /// 单元测试必须用它，而不是 <c>new StockMutationLock()</c> —— 后者的互斥量是进程内共享的，
+    /// 一旦某个用例断言失败（例如在 <c>await</c> 到一半就抛，来不及 Dispose），
+    /// 就会把某个桶永久占住；之后所有用到该桶的用例（含跑真实服务的集成测试）全部挂死。
+    /// 一次偶发抖动会被升级成整套测试挂起，且现场几乎无法定位。
+    /// </para>
+    /// </summary>
+    internal static StockMutationLock CreateIsolated(int bucketCount = BucketCount)
+        => new(CreateBuckets(bucketCount), new SemaphoreSlim(1, 1));
+
+    private static SemaphoreSlim[] CreateBuckets(int count)
+    {
+        var arr = new SemaphoreSlim[count];
+        for (var i = 0; i < count; i++) arr[i] = new SemaphoreSlim(1, 1);
         return arr;
     }
 
     /// <summary>商品 ID → 桶序号（负数也能落到合法区间）。</summary>
-    private static int BucketOf(int productId) => (productId & int.MaxValue) % BucketCount;
+    private int BucketOf(int productId) => (productId & int.MaxValue) % _buckets.Length;
 
     /// <summary>
     /// 获取「单据号分配」全局锁。<b>必须先于 <see cref="AcquireAsync"/> 获取</b>，
@@ -52,8 +80,8 @@ public sealed class StockMutationLock
     /// </summary>
     public async Task<IDisposable> AcquireOrderNoAsync()
     {
-        await OrderNoGate.WaitAsync();
-        return new OrderNoReleaser();
+        await _orderNoGate.WaitAsync();
+        return new OrderNoReleaser(_orderNoGate);
     }
 
     /// <summary>
@@ -63,24 +91,25 @@ public sealed class StockMutationLock
     /// </summary>
     public async Task<IDisposable> AcquireAsync(IEnumerable<int> productIds)
     {
+        var buckets = _buckets;
         var indexes = productIds.Select(BucketOf).Distinct().OrderBy(i => i).ToArray();
         var held = 0;
         try
         {
             for (; held < indexes.Length; held++)
-                await Buckets[indexes[held]].WaitAsync();
+                await buckets[indexes[held]].WaitAsync();
         }
         catch
         {
             // 获取过程中异常/取消：回滚已持有的锁，避免把桶永久占住
-            for (var i = held - 1; i >= 0; i--) Buckets[indexes[i]].Release();
+            for (var i = held - 1; i >= 0; i--) buckets[indexes[i]].Release();
             throw;
         }
 
-        return new Releaser(indexes);
+        return new Releaser(buckets, indexes);
     }
 
-    private sealed class OrderNoReleaser : IDisposable
+    private sealed class OrderNoReleaser(SemaphoreSlim gate) : IDisposable
     {
         private bool _disposed;
 
@@ -88,11 +117,11 @@ public sealed class StockMutationLock
         {
             if (_disposed) return;
             _disposed = true;
-            OrderNoGate.Release();
+            gate.Release();
         }
     }
 
-    private sealed class Releaser(int[] indexes) : IDisposable
+    private sealed class Releaser(SemaphoreSlim[] buckets, int[] indexes) : IDisposable
     {
         private bool _disposed;
 
@@ -101,7 +130,7 @@ public sealed class StockMutationLock
             if (_disposed) return;
             _disposed = true;
             // 逆序释放，与获取顺序相反
-            for (var i = indexes.Length - 1; i >= 0; i--) Buckets[indexes[i]].Release();
+            for (var i = indexes.Length - 1; i >= 0; i--) buckets[indexes[i]].Release();
         }
     }
 }

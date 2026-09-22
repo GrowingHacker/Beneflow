@@ -12,7 +12,7 @@ public class MenuService : IMenuService
     private readonly ILogService _logs;
     public MenuService(AppDbContext db, ILogService logs) { _db = db; _logs = logs; }
 
-    public async Task<List<object>> TreeAsync()
+    public async Task<List<MenuNodeDto>> TreeAsync()
     {
         var menus = await _db.Menus.AsNoTracking().OrderBy(m => m.Sort).ThenBy(m => m.Id).ToListAsync();
         return BuildTree(menus, null);
@@ -27,14 +27,14 @@ public class MenuService : IMenuService
         return dirName != "" && dirByName.TryGetValue(dirName, out var dir) ? dir.Id : null;
     }
 
-    private List<object> BuildTree(List<Menu> all, int? parentId)
+    private List<MenuNodeDto> BuildTree(List<Menu> all, int? parentId)
     {
         var dirByName = all.Where(m => m.Type == "目录").ToDictionary(m => m.Name);
-        return all.Where(m => EffectiveParent(m, dirByName) == parentId).Select(m => (object)new
+        return all.Where(m => EffectiveParent(m, dirByName) == parentId).Select(m => new MenuNodeDto
         {
-            id = m.Id, name = m.Name, type = m.Type, permCode = m.PermCode,
-            sort = m.Sort, visible = m.Visible,
-            children = BuildTree(all, m.Id),
+            Id = m.Id, Name = m.Name, Type = m.Type, PermCode = m.PermCode,
+            Sort = m.Sort, Visible = m.Visible,
+            Children = BuildTree(all, m.Id),
         }).ToList();
     }
 
@@ -49,15 +49,15 @@ public class MenuService : IMenuService
         _ => "",
     };
 
-    public async Task<ApiResult<object>> CreateAsync(string name, string type, string? permCode, int? parentId, int sort)
+    public async Task<ApiResult<IdResultDto>> CreateAsync(string name, string type, string? permCode, int? parentId, int sort)
     {
-        if (string.IsNullOrWhiteSpace(name)) return ApiResult<object>.Fail("请填写菜单名称");
+        if (string.IsNullOrWhiteSpace(name)) return ApiResult<IdResultDto>.Fail("请填写菜单名称");
         var m = new Menu { Name = name.Trim(), Type = type is "目录" or "菜单" or "按钮" ? type : "菜单", PermCode = permCode?.Trim() ?? "", ParentId = parentId, Sort = sort };
         _db.Menus.Add(m);
         await _db.SaveChangesAsync();
         await _logs.WriteAsync("菜单管理", "新增菜单", m.Name);
         await _db.SaveChangesAsync();
-        return ApiResult<object>.Ok(new { id = m.Id });
+        return ApiResult<IdResultDto>.Ok(new IdResultDto { Id = m.Id });
     }
 
     public async Task<ApiResult> UpdateAsync(int id, string? name, string? permCode, int? sort)

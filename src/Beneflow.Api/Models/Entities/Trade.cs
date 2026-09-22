@@ -41,6 +41,9 @@ public class PurchaseReturn
     /// <summary>应退款项金额</summary>
     public decimal RefundAmount { get; set; }
     public string? Reason { get; set; }
+    /// <summary>是否已作废（作废后回补库存、不计入供应商对账）。字段与 <see cref="PurchaseOrder"/> 对齐。</summary>
+    public bool IsVoided { get; set; }
+    public DateTime? VoidedAt { get; set; }
     public int CreatedBy { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.Now;
 
@@ -72,6 +75,10 @@ public class PurchaseReturnDetail
 /// ① 按折率录入（DiscountRate 有值，单位「折」，8.80 = 8.8 折）⇒ 先算折后金额再减法反算优惠额；
 /// ② 按金额录入（DiscountRate 为 null）。
 /// 之所以以金额为准、折率只作录入来源与审计痕迹：金额可加总（报表合计/毛利/对账），折率不可加总。
+/// <para>
+/// 支付形态有两种，落库口径统一在 <see cref="PayMethod"/>：单项支付直接记方式名；
+/// 混合支付（一笔单拆多种收款方式，或单一方式 + 差额挂账）记「混合」，每一行构成见 <see cref="SaleOrderPayment"/>。
+/// </para>
 /// </summary>
 public class SaleOrder
 {
@@ -88,13 +95,17 @@ public class SaleOrder
     public decimal RoundOffAmount { get; set; }
     /// <summary>应收金额：商品总额 − 优惠金额 − 抹零金额，即顾客应付</summary>
     public decimal PayAmount { get; set; }
-    /// <summary>实收金额：实际收到的净额。非赊账 = 应收金额；赊账 = 累计已还款额（开单 0，每笔还款累加）</summary>
+    /// <summary>实收金额：实际收到的净额。非赊账 = 应收金额；赊账 = 累计已还款额（开单 0，每笔还款累加）；
+    /// 混合支付且差额挂账时 = 实际收到的现金/微信/支付宝合计（挂账那部分没收到，不计）</summary>
     public decimal ReceivedAmount { get; set; }
-    /// <summary>收款方式：现金/微信/支付宝/赊账</summary>
+    /// <summary>
+    /// 收款方式：现金/微信/支付宝/赊账，以及<b>混合</b>（一笔单用多种方式收款，构成见 <see cref="SaleOrderPayment"/>）。
+    /// 「混合」的判据是「支付组成不止一种」：≥2 种支付方式，或单一方式 + 差额挂账。
+    /// </summary>
     public string PayMethod { get; set; } = "现金";
-    /// <summary>收款额（递钞额）：现金单为顾客实际交出的钱，非现金为 0</summary>
+    /// <summary>收款额（递钞额）：顾客实际交出的现金（单项现金单为全部，混合支付为现金那一部分），非现金为 0</summary>
     public decimal CashAmount { get; set; }
-    /// <summary>找零金额：收款额 − 应收金额，仅现金单有值</summary>
+    /// <summary>找零金额：实收合计 − 应收金额，仅当收到现金时才可能大于 0（找零只能来自现金）</summary>
     public decimal ChangeAmount { get; set; }
     public bool IsCredit { get; set; }
     /// <summary>赊账顾客微信号（欠款标识）</summary>
@@ -130,6 +141,29 @@ public class SaleOrderDetail
     public decimal SubTotal { get; set; }
     /// <summary>已退货数量（支持多次部分退货）</summary>
     public decimal ReturnedQuantity { get; set; }
+
+    public SaleOrder Order { get; set; } = null!;
+}
+
+/// <summary>
+/// 销售单支付明细（混合支付专用）：一笔单拆成多种支付方式，每个方式一行。
+/// 单项支付**不落本表**——收款方式一个字段就说得清，落在 <see cref="SaleOrder.PayMethod"/> 上；
+/// 一旦支付组成不止一种（≥2 种方式，或单一方式 + 差额挂账），PayMethod 记「混合」，构成看本表。
+/// <para>
+/// 与主表金额链的对齐关系（可直接用来对账）：
+/// <c>Σ Amount = 应收 PayAmount + 找零 ChangeAmount</c>。
+/// 单看某一行的话，除「赊账」外的 Amount 都是**该方式实际收到的钱**，只有「赊账」行的 Amount 是
+/// **挂账额**（没收到、记在 CreditSale 上的那部分）——这也是为什么实收口径不能简单地取本表合计。
+/// </para>
+/// </summary>
+public class SaleOrderPayment
+{
+    public long Id { get; set; }
+    public int OrderId { get; set; }
+    /// <summary>支付方式：现金/微信/支付宝/赊账</summary>
+    public string PayMethod { get; set; } = "现金";
+    /// <summary>该方式金额：非赊账＝该方式收到的钱（现金行是递钞额，可大于应收，差额即找零）；赊账＝挂账额</summary>
+    public decimal Amount { get; set; }
 
     public SaleOrder Order { get; set; } = null!;
 }

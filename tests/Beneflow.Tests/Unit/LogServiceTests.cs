@@ -20,7 +20,7 @@ public class LogServiceTests : TestBase
         return l;
     }
 
-    private async Task<PagedResult<object>> QueryAsync(string? keyword = null, DateTime? from = null,
+    private async Task<PagedResult<OperationLogItemDto>> QueryAsync(string? keyword = null, DateTime? from = null,
         DateTime? to = null, int page = 1, int pageSize = 20) =>
         await LogSvc.QueryAsync(keyword, from, to, page, pageSize);
 

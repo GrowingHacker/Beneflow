@@ -6,9 +6,9 @@ namespace Beneflow.Api.Services;
 /// <summary>供应商管理</summary>
 public interface ISupplierService
 {
-    Task<PagedResult<object>> ListAsync(string? keyword, int page, int pageSize);
-    Task<ApiResult<object>> GetAsync(int id);
-    Task<ApiResult<object>> CreateAsync(SupplierUpsertDto dto);
+    Task<PagedResult<SupplierListItemDto>> ListAsync(string? keyword, int page, int pageSize);
+    Task<ApiResult<SupplierDetailDto>> GetAsync(int id);
+    Task<ApiResult<IdResultDto>> CreateAsync(SupplierUpsertDto dto);
     Task<ApiResult> UpdateAsync(int id, JsonElement body);
     Task<ApiResult> DeleteAsync(int id);
 }
