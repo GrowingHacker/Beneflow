@@ -98,7 +98,7 @@ Beneflow/
 |
 ├── tests/Beneflow.Tests/  # 测试工程
 │   ├── TestBase.cs        # 共用夹具：独立 InMemory 库 + 全部 Service 实例 + 种子数据 + 断言辅助
-│   ├── Unit/              # 服务单元测试（24 个文件）
+│   ├── Unit/              # 服务单元测试（25 个文件）
 │   └── Integration/       # 进程内全链路集成测试（14 个文件）
 |
 ├── scripts/               # 部署/运维 PowerShell 脚本
@@ -175,7 +175,7 @@ Beneflow/
 
 ## 测试
 
-**当前状态：549 个用例全部通过（Release 约 1 分钟，0 失败、0 警告）。**
+**当前状态：554 个用例全部通过（Release 约 1 分钟，0 失败、0 警告）。**
 
 ```powershell
 dotnet test tests/Beneflow.Tests/Beneflow.Tests.csproj --configuration Release
@@ -185,7 +185,7 @@ dotnet test tests/Beneflow.Tests/Beneflow.Tests.csproj --configuration Release
 
 | 层次 | 位置 | 说明 |
 |---|---|---|
-| 服务单元测试 | `Unit/`（24 个文件） | xUnit + EF Core InMemory，每个用例独立数据库；覆盖各 Service 的业务分支与边界 |
+| 服务单元测试 | `Unit/`（25 个文件） | xUnit + EF Core InMemory，每个用例独立数据库；覆盖各 Service 的业务分支与边界 |
 | 集成测试 | `Integration/`（14 个文件） | `WebApplicationFactory<Program>` 进程内跑真实 API 管线，经 `HttpClient` 发真实 HTTP 请求，验证跨模块协作与统一响应契约 |
 | 并发一致性测试 | 上述两处 | 锁契约测试 + 并发收银不超卖，见「并发与一致性」一节 |
 
