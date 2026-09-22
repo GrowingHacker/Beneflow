@@ -20,7 +20,10 @@ D:/Beneflow/publish-*/
 *.rar
 
 ## Logs & local data
-logs/
+# 运行时日志目录（Serilog 落的是 log-*.txt，所以 *.log 那条盖不住，得按目录忽略）。
+# ⚠️ 这里**必须写具体路径**，不能写裸 `logs/`：在大小写不敏感的文件系统上，
+#    裸 `logs/` 会把 src/Beneflow.Api/Services/Logs/（源码目录）一起忽略掉，导致源文件进不了仓库。
+src/Beneflow.Api/logs/
 *.log
 *.dbmdl
 *.bak
