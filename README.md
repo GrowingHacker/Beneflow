@@ -268,6 +268,11 @@ cd <发行包解压根目录 或 仓库根目录>
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass -Force
 
+# 关闭「智能应用控制」，否则第 2 步的 Beneflow.Api.exe 会被拦（报「应用程序控制策略已阻止此文件」）
+Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy' `
+    -Name VerifiedAndReputablePolicyState -Value 0 -Type DWord
+C:\Windows\System32\CiTool.exe -r
+
 # 1. 准备数据库层：授权 + 生成 appsettings.Production.json + 写 scripts\数据库凭据.txt
 .\scripts\setup-sqlserver.ps1
 
