@@ -166,6 +166,38 @@ public class UserServiceTests : TestBase
     }
 
     [Fact]
+    public async Task ResetPasswordAsync_Admin_WritesBuiltinDefaultPassword()
+    {
+        var created = await UserSvc.CreateAsync(NewUser("resetpwd2", "abc123", CashierRoleId));
+        var id = GetResultDataProp<int>(created.Data!, "id");
+
+        Assert.Equal(0, (await UserSvc.ResetPasswordAsync(id, isAdmin: true)).Code);
+
+        // 默认密码全数字，走 CreateAsync / UpdateAsync 的强度规则必被拦；重置这条路不适用该规则。
+        // 这里写死字面量而不是引用常量：常量被改动时这条必须变红（前端提示文案也跟着要改）。
+        Assert.Equal(0, (await AuthSvc.LoginAsync("resetpwd2", "123456", "127.0.0.1")).Code);
+    }
+
+    [Fact]
+    public async Task ResetPasswordAsync_NotAdmin_CannotResetOthers()
+    {
+        var created = await UserSvc.CreateAsync(NewUser("resetpwd3", "abc123", CashierRoleId));
+        var id = GetResultDataProp<int>(created.Data!, "id");
+
+        var r = await UserSvc.ResetPasswordAsync(id, isAdmin: false);
+        Assert.NotEqual(0, r.Code);
+        Assert.Contains("无权限", r.Message);
+    }
+
+    [Fact]
+    public async Task ResetPasswordAsync_NotExist_ReturnsError()
+    {
+        var r = await UserSvc.ResetPasswordAsync(9999, isAdmin: true);
+        Assert.NotEqual(0, r.Code);
+        Assert.Contains("用户不存在", r.Message);
+    }
+
+    [Fact]
     public async Task UpdateAsync_Admin_InvalidPhone_ReturnsError()
     {
         var created = await UserSvc.CreateAsync(NewUser("badphone", "abc123", CashierRoleId));
@@ -220,6 +252,42 @@ public class UserServiceTests : TestBase
         var r = await UserSvc.DeleteAsync(1);
         Assert.NotEqual(0, r.Code);
         Assert.Contains("禁止删除", r.Message);
+    }
+
+    [Fact]
+    public async Task DeleteAsync_CannotDeleteSelf()
+    {
+        // 种子里的唯一用户就是 id=1，删它会被更靠前的「内置店主」那条守卫拦掉，
+        // 走不到这里要验的「删自己」分支。所以另建一个账号当「当前登录用户」——
+        // 这才是这条守卫真正保护的现场：店主之外的第二个人自己把自己删了。
+        var created = await UserSvc.CreateAsync(NewUser("secondowner", "abc123", OwnerRoleId));
+        var meId = GetResultDataProp<int>(created.Data!, "id");
+
+        var previous = CurrentUser.Id;
+        CurrentUser.Id = meId;
+        try
+        {
+            var r = await UserSvc.DeleteAsync(meId);
+            Assert.NotEqual(0, r.Code);
+            Assert.Contains("不能删除当前登录的账号", r.Message);
+        }
+        finally { CurrentUser.Id = previous; }
+
+        // 拦在写库之前：账号原样可用，不是「删了一半」
+        var me = await Db.Users.AsNoTracking().FirstAsync(u => u.Id == meId);
+        Assert.False(me.IsDeleted);
+        Assert.True(me.Status);
+        Assert.Equal(0, (await AuthSvc.LoginAsync("secondowner", "abc123", "127.0.0.1")).Code);
+    }
+
+    [Fact]
+    public async Task DeleteAsync_CurrentUserIsBuiltinOwner_ReportsBuiltinGuard()
+    {
+        // 两条守卫会同时命中 id=1 的当前用户，先报哪一条要钉死：
+        // 「内置店主」比「不能删自己」更贴近根因，用户看到这句才知道该找店主账号而不是换个登录人。
+        var r = await UserSvc.DeleteAsync(UserId);
+        Assert.NotEqual(0, r.Code);
+        Assert.Contains("内置店主账号禁止删除", r.Message);
     }
 
     [Fact]

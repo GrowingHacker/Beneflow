@@ -6,7 +6,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
-using Microsoft.OpenApi.Models;
+using Microsoft.OpenApi;
 using Serilog;
 
 // ---------- 命令行开关 ----------
@@ -121,19 +121,11 @@ if (builder.Environment.IsDevelopment())
             Description = "填入登录接口返回的 token（不需要写 Bearer 前缀）",
         });
 
-        o.AddSecurityRequirement(new OpenApiSecurityRequirement
+        // 10.x 起 AddSecurityRequirement 改成「按文档构造」：安全方案用 OpenApiSecuritySchemeReference 引用，
+        // 不再自己 new 一个挂了 Reference 的 OpenApiSecurityScheme（Microsoft.OpenApi 2.x 移除了那条路）。
+        o.AddSecurityRequirement(document => new OpenApiSecurityRequirement
         {
-            {
-                new OpenApiSecurityScheme
-                {
-                    Reference = new OpenApiReference
-                    {
-                        Type = ReferenceType.SecurityScheme,
-                        Id = "Bearer",
-                    },
-                },
-                Array.Empty<string>()
-            },
+            [new OpenApiSecuritySchemeReference("Bearer", document)] = [],
         });
     });
 }

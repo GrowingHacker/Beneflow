@@ -9,6 +9,13 @@ namespace Beneflow.Api.Services;
 /// <summary>用户管理：列表（含角色关联）/ 增改删 / 启停（操作均记日志）</summary>
 public class UserService : IUserService
 {
+    /// <summary>
+    /// 「重置密码」写进库里的系统内置默认密码。**全数字是有意的**：它不参与用户自定义密码的
+    /// 强度规则（见 <see cref="ResetPasswordAsync"/>），前端重置按钮的确认与提示文案也写死了这个值，
+    /// 改动时要连前端一起改。
+    /// </summary>
+    public const string DefaultPassword = "123456";
+
     private readonly AppDbContext _db;
     private readonly ICurrentUser _me;
     private readonly ILogService _logs;
@@ -111,6 +118,26 @@ public class UserService : IUserService
         return ApiResult.Ok();
     }
 
+    /// <summary>
+    /// 把密码重置为系统内置的 <see cref="DefaultPassword"/>。
+    ///
+    /// 与 <see cref="UpdateAsync"/> 里「管理员填了新密码」那条路刻意分开：
+    /// 那条路设的是**人想出来的密码**，必须过强度校验；而重置是系统预设动作 ——
+    /// 管理员不输入任何密码，落到库里的值由后端写死，因此这里不适用强度规则
+    /// （默认密码全数字，走强度校验必然被拦）。
+    /// </summary>
+    public async Task<ApiResult> ResetPasswordAsync(int id, bool isAdmin)
+    {
+        if (_me.Id != id && !isAdmin) return ApiResult.Fail("无权限操作他人账号");
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == id && !u.IsDeleted);
+        if (user == null) return ApiResult.Fail("用户不存在");
+
+        user.PasswordHash = PasswordHasher.Hash(DefaultPassword, user.Salt);
+        await _logs.WriteAsync("用户管理", "重置密码", $"{user.Username} → 默认密码");
+        await _db.SaveChangesAsync();
+        return ApiResult.Ok();
+    }
+
     public async Task<ApiResult> ToggleAsync(int id, string status)
     {
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == id && !u.IsDeleted);
@@ -127,6 +154,9 @@ public class UserService : IUserService
     public async Task<ApiResult> DeleteAsync(int id)
     {
         if (id == 1) return ApiResult.Fail("内置店主账号禁止删除");
+        // 与 ToggleAsync 的「不能禁用当前登录的账号」对称。删除比禁用更彻底 —— 逻辑删除后本人都登不回来，
+        // 现场又没有第二个店主账号时，只能去改库才能救。
+        if (id == _me.Id) return ApiResult.Fail("不能删除当前登录的账号");
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == id && !u.IsDeleted);
         if (user == null) return ApiResult.Fail("用户不存在");
         user.IsDeleted = true;

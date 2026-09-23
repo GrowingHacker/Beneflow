@@ -15,7 +15,7 @@
         <el-table-column label="角色" prop="role" width="120" />
         <el-table-column label="状态" width="90"><template #default="{ row }"><el-tag :type="row.status === '启用' ? 'success' : 'info'" size="small">{{ row.status }}</el-tag></template></el-table-column>
         <el-table-column label="创建时间" prop="createdAt" width="140" />
-        <el-table-column label="操作" width="150" fixed="right" align="center">
+        <el-table-column label="操作" width="190" fixed="right" align="center">
           <template #default="{ row }">
             <div class="op-btns">
               <el-button text type="primary" title="编辑" @click="openEdit(row)"><el-icon><Edit /></el-icon></el-button>
@@ -23,6 +23,7 @@
               <el-button text :type="row.status === '启用' ? 'danger' : 'success'" :title="row.status === '启用' ? '禁用' : '启用'" @click="toggleStatus(row)">
                 <el-icon><component :is="row.status === '启用' ? 'TurnOff' : 'Open'" /></el-icon>
               </el-button>
+              <el-button text type="danger" title="删除" @click="removeUser(row)"><el-icon><Delete /></el-icon></el-button>
             </div>
           </template>
         </el-table-column>
@@ -99,7 +100,7 @@ function pageSetup(deps) {
   }
   async function resetPwd(row) {
     try { await confirm('确认重置「'+row.username+'」的密码为默认值 123456？'); } catch(e){ return; }
-    await api.put('/users/' + row.id, { name: row.name, password: '123456' });
+    await api.post('/users/' + row.id + '/reset-password');
     toast('已重置密码为 123456','success');
   }
   async function toggleStatus(row) {
@@ -107,9 +108,16 @@ function pageSetup(deps) {
     try { await api.put('/users/' + row.id + '/status', { status: next }); row.status = next; toast('已' + next, 'success'); }
     catch (e) {}
   }
+  async function removeUser(row) {
+    // 内置店主（id=1）后端也会拒 —— 这里提前拦一次，省一个往返，也让用户明白为什么不能删
+    if (row.id === 1) { toast('内置店主账号不能删除','warning'); return; }
+    try { await confirm('确认删除用户「' + row.username + '」？删除后该账号无法登录。'); } catch(e){ return; }
+    await api.delete('/users/' + row.id);
+    toast('已删除','success'); load();
+  }
 
   onMounted(() => { load(); loadRoles(); });
   return { list, loading, keyword, page, pageSize, total, dialog, form, roles,
-    load, search, openCreate, openEdit, save, resetPwd, toggleStatus, common, toast };
+    load, search, openCreate, openEdit, save, resetPwd, toggleStatus, removeUser, common, toast };
 }
 </script>

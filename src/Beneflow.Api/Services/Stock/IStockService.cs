@@ -12,7 +12,7 @@ public interface IStockService
     Task<ApiResult<object>> CreateCheckAsync(CreateStockCheckDto dto);
     Task<ApiResult> ConfirmCheckAsync(int id);
     Task<object> ExpiryListAsync(string? tag, int page, int pageSize);
-    Task<ApiResult> MarkProcessedAsync(long[] ids);
+    Task<ApiResult<string>> MarkProcessedAsync(long[] ids);
     Task<List<object>> WarningsAsync();
     Task<PagedResult<object>> LogListAsync(string? keyword, string? changeType, int page, int pageSize);
     /// <summary>导出库存流水全量（按 keyword/changeType 筛选，不分页）</summary>

@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Xunit;
 
@@ -55,6 +56,39 @@ public class SwaggerEnvironmentTests : IClassFixture<ProductionWebAppFactory>,
         var resp = await client.GetAsync("/swagger/index.html");
 
         Assert.True(resp.IsSuccessStatusCode, $"Swagger UI 应可访问，实际 HTTP {resp.StatusCode}");
+    }
+
+    /// <summary>
+    /// 文档内容本身的两条硬约定。升级 Swashbuckle（6.6.2 → 10.2.3 这类跨大版本）时，
+    /// 上面两条只会回答「页面还打得开吗」，回答不了「文档还是不是原来那份」——
+    /// 安全定义与包络说明都可能静默丢/变样，所以在这里钉住。
+    /// </summary>
+    [Fact]
+    public async Task 开发环境_Swagger文档_带Bearer定义且包络data有说明()
+    {
+        var client = _dev.CreateClient();
+        var resp = await client.GetAsync("/swagger/v1/swagger.json");
+        Assert.True(resp.IsSuccessStatusCode, $"Swagger 文档应可访问，实际 HTTP {resp.StatusCode}");
+
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+        var root = doc.RootElement;
+
+        // ① Authorize 按钮靠它：securitySchemes 丢了，右上角填的 token 不会挂到请求上，整页调试全是 401
+        var scheme = root.GetProperty("components").GetProperty("securitySchemes").GetProperty("Bearer");
+        Assert.Equal("http", scheme.GetProperty("type").GetString());
+        Assert.Equal("bearer", scheme.GetProperty("scheme").GetString());
+
+        // ② 路径按路由模板生成（升级不该把路径形状改掉）；顺带钉住新增的重置密码接口
+        var paths = root.GetProperty("paths");
+        Assert.True(paths.TryGetProperty("/api/v1/auth/login", out _), "登录接口应出现在文档里");
+        Assert.True(paths.TryGetProperty("/api/v1/users/{id}/reset-password", out _),
+            "重置密码接口应出现在文档里");
+
+        // ③ 非泛型包络的 data 要带说明：读文档的人不会把空对象当成「有个空结构的字段」。
+        //    这条同时证明 XML 注释真的被 Swashbuckle 读进了 schema（注释文件没生成/没接上时它会红）。
+        var dataSchema = root.GetProperty("components").GetProperty("schemas")
+            .GetProperty("ApiResult").GetProperty("properties").GetProperty("data");
+        Assert.Contains("约定不带数据", dataSchema.GetProperty("description").GetString());
     }
 }
 

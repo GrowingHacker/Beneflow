@@ -58,9 +58,9 @@ public partial class StockService : IStockService
     /// 批量标记临期商品为已处理：扣减对应批次库存，写入库存流水（类型：临期报损）。
     /// 扣减数量以批次剩余数量为准（即批次 Quantity 字段），最多扣减到 0，不会出现负库存。
     /// </summary>
-    public async Task<ApiResult> MarkProcessedAsync(long[] ids)
+    public async Task<ApiResult<string>> MarkProcessedAsync(long[] ids)
     {
-        if (ids == null || ids.Length == 0) return ApiResult.Fail("请选择要标记的记录");
+        if (ids == null || ids.Length == 0) return ApiResult<string>.Fail("请选择要标记的记录");
 
         // 只读预取批次对应的商品用于加锁（此步不修改数据）
         var productIds = await _db.Batches.AsNoTracking()
@@ -72,8 +72,13 @@ public partial class StockService : IStockService
         }
     }
 
-    /// <summary>标记临期处理的实际逻辑；调用方须已持有相关商品的库存锁。</summary>
-    private async Task<ApiResult> MarkProcessedCoreAsync(long[] ids)
+    /// <summary>
+    /// 标记临期处理的实际逻辑；调用方须已持有相关商品的库存锁。
+    /// 成功时 data 是一句给人看的处理结果（当前前端未使用它，只 toast 固定文案）。
+    /// 标成 <c>ApiResult&lt;string&gt;</c> 而不是非泛型包络，是为了 Swagger 里能看出 data 的形状 ——
+    /// 非泛型 <see cref="ApiResult"/> 的 data 是 <c>object</c>，在文档里只会显示成空对象 <c>{}</c>。
+    /// </summary>
+    private async Task<ApiResult<string>> MarkProcessedCoreAsync(long[] ids)
     {
         await using var tx = await _db.Database.BeginTransactionAsync();
         try
@@ -83,7 +88,7 @@ public partial class StockService : IStockService
                 .Include(b => b.Product)
                 .ToListAsync();
 
-            if (batches.Count == 0) return ApiResult.Fail("所选批次不存在或均已处理");
+            if (batches.Count == 0) return ApiResult<string>.Fail("所选批次不存在或均已处理");
 
             var totalQty = 0m;
             var productNames = new List<string>();
@@ -141,7 +146,7 @@ public partial class StockService : IStockService
             await _db.SaveChangesAsync();
 
             await tx.CommitAsync();
-            return ApiResult.Ok($"已处理 {batches.Count} 个批次，扣减库存 {totalQty} 件");
+            return ApiResult<string>.Ok($"已处理 {batches.Count} 个批次，扣减库存 {totalQty} 件");
         }
         catch (Exception ex)
         {

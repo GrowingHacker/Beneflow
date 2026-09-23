@@ -175,7 +175,7 @@ Beneflow/
 
 ## 测试
 
-**当前状态：646 个用例全部通过（Release 约 1 分钟，0 失败、0 警告）。**
+**当前状态：653 个用例全部通过（Release 约 1 分钟，0 失败、0 警告）。**
 
 ```powershell
 dotnet test tests/Beneflow.Tests/Beneflow.Tests.csproj --configuration Release
@@ -203,7 +203,7 @@ dotnet test tests/Beneflow.Tests/Beneflow.Tests.csproj --configuration Release
 
 全程用一次性临时库（跑完即删、备份目录重定向到临时目录），不碰开发库。
 
-规模：后端源码约 11.2k 行 / 113 个文件（`src/Beneflow.Api/**/*.cs`，不含 EF 自动生成的 `Migrations/`），测试代码约 11.9k 行 / 50 个文件（`tests/**/*.cs`），比例约 1.06 : 1。582 个测试方法（`[Fact]` 561 + `[Theory]` 21），Theory 展开后共 646 个用例。
+规模：后端源码约 11.3k 行 / 113 个文件（`src/Beneflow.Api/**/*.cs`，不含 EF 自动生成的 `Migrations/`），测试代码约 12.1k 行 / 50 个文件（`tests/**/*.cs`），比例约 1.07 : 1。589 个测试方法（`[Fact]` 568 + `[Theory]` 21），Theory 展开后共 653 个用例。
 
 ## 生产部署
 

@@ -232,6 +232,30 @@ public class MasterDataIntegrationTests : IntegrationSeedBase
         Assert.Contains("数字和字母", badPwd.GetProperty("message").GetString());
     }
 
+    [Fact]
+    public async Task 用户_重置密码为默认值后默认密码可登录且原密码失效()
+    {
+        await LoginAsAdminAsync();
+        var roleId = (await ReadBody(await Client.GetAsync("/api/v1/roles"))).GetProperty("data")
+            .EnumerateArray().First().GetProperty("id").GetInt32();
+
+        var username = "it" + Guid.NewGuid().ToString("N")[..8];
+        var created = await ExpectOk(await PostJsonAsync("/api/v1/users",
+            new { username, password = "origin123", name = "重置密码", roleId }));
+        var userId = created.GetProperty("id").GetInt32();
+
+        // 重置：管理员**不提交任何密码**，落库的值由后端写死成默认密码 ——
+        // 所以它也绕开了上面那条「新密码必须含数字和字母」的规则（默认密码全数字）。
+        Assert.Equal(0, (await ReadBody(await PostAsync($"/api/v1/users/{userId}/reset-password")))
+            .GetProperty("code").GetInt32());
+
+        await LoginAsAsync(username, "123456");     // 默认密码能登进去
+
+        var stale = await ReadBody(await PostJsonAsync("/api/v1/auth/login",
+            new { username, password = "origin123" }));
+        Assert.NotEqual(0, stale.GetProperty("code").GetInt32());   // 原密码同时失效
+    }
+
     // ================= 供应商：详情与编辑 =================
 
     [Fact]

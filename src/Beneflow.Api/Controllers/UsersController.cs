@@ -25,6 +25,10 @@ public class UsersController : BaseApiController
     public async Task<ApiResult> Update(int id, [FromBody] UserUpdateDto dto)
         => await _svc.UpdateAsync(id, dto, IsAdmin);
 
+    /// <summary>重置密码为系统默认密码（仅店主；不需要提交新密码）</summary>
+    [HttpPost("{id:int}/reset-password")]
+    public Task<ApiResult> ResetPassword(int id) => _svc.ResetPasswordAsync(id, IsAdmin);
+
     /// <summary>启用/禁用：{ status: "启用" | "禁用" }</summary>
     [HttpPut("{id:int}/status")]
     public async Task<ApiResult> Toggle(int id, [FromBody] StatusBody body)

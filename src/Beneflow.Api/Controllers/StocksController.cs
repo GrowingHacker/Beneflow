@@ -41,7 +41,7 @@ public class StocksController : BaseApiController
 
     /// <summary>批量标记临期已处理</summary>
     [HttpPost("expiry/mark-processed")]
-    public async Task<ApiResult> MarkProcessed([FromBody] long[] ids) => await _svc.MarkProcessedAsync(ids);
+    public async Task<ApiResult<string>> MarkProcessed([FromBody] long[] ids) => await _svc.MarkProcessedAsync(ids);
 
     // ---------- 库存预警 ----------
     /// <summary>低于安全库存的商品 + 建议补货数量</summary>

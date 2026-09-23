@@ -8,6 +8,7 @@ public interface IUserService
     Task<PagedResult<UserListItemDto>> ListAsync(string? keyword, int page, int pageSize);
     Task<ApiResult<IdResultDto>> CreateAsync(UserCreateDto dto);
     Task<ApiResult> UpdateAsync(int id, UserUpdateDto dto, bool isAdmin);
+    Task<ApiResult> ResetPasswordAsync(int id, bool isAdmin);
     Task<ApiResult> ToggleAsync(int id, string status);
     Task<ApiResult> DeleteAsync(int id);
 }

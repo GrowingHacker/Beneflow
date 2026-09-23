@@ -31,7 +31,7 @@
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="8.0.0" />
     <!-- Excel 导出：ClosedXML 基于 OpenXML 封装，API 简洁，MIT 协议可商用 -->
     <PackageReference Include="ClosedXML" Version="0.104.2" />
-    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.6.2" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="10.2.3" />
   </ItemGroup>
 
   <!-- 集成测试项目需要访问顶层语句生成的 internal Program 类 -->
