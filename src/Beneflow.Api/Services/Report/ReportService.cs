@@ -298,7 +298,7 @@ public class ReportService : IReportService
     private readonly record struct LedgerLine(string Type, string OrderNo, string SupplierName,
         decimal Qty, decimal Amount, DateTime At);
 
-    /// <summary>赊账汇总：按微信号聚合 + 时间段统计</summary>
+    /// <summary>赊账汇总：按微信号聚合 + 时间段统计（含未结清 / 已结清笔数）</summary>
     public async Task<object> CreditSummaryAsync(string? dateFrom, string? dateTo)
     {
         var q = _db.CreditSales.AsNoTracking().AsQueryable();
@@ -322,6 +322,8 @@ public class ReportService : IReportService
             TotalCredit = g.Sum(x => x.CreditAmount),
             PaidCredit = g.Sum(x => x.PaidAmount),
             UnpaidCredit = g.Sum(x => x.RemainingAmount),
+            UnsettledCount = g.Count(x => !x.Status),
+            SettledCount = g.Count(x => x.Status),
         }).ToListAsync()).FirstOrDefault();
 
         return new
@@ -330,6 +332,8 @@ public class ReportService : IReportService
             totalCredit = Math.Round(stats?.TotalCredit ?? 0, 2),
             paidCredit = Math.Round(stats?.PaidCredit ?? 0, 2),
             unpaidCredit = Math.Round(stats?.UnpaidCredit ?? 0, 2),
+            unsettled = stats?.UnsettledCount ?? 0,
+            settled = stats?.SettledCount ?? 0,
         };
     }
 

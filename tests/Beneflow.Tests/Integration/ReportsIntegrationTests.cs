@@ -295,6 +295,20 @@ public class ReportsIntegrationTests : IntegrationSeedBase
                      rows.Sum(x => x.GetProperty("paidTotal").GetDecimal()));
         Assert.Equal(data.GetProperty("unpaidCredit").GetDecimal(),
                      rows.Sum(x => x.GetProperty("remainingTotal").GetDecimal()));
+
+        // 顶部笔数（「赊账汇总」卡片直接绑这两个字段）
+        // ① 未结清笔数 = 各微信号未结清笔数之和
+        var unsettled = data.GetProperty("unsettled").GetInt32();
+        var settled = data.GetProperty("settled").GetInt32();
+        Assert.Equal(rows.Sum(x => x.GetProperty("unsettledCount").GetInt32()), unsettled);
+        Assert.True(unsettled >= 1);   // 至少含刚创建的这笔
+
+        // ② 与「赊账管理」页统计同源，两页不该给出不同笔数；一笔也不会凭空多出或漏掉
+        var credits = (await ReadBody(await Client.GetAsync("/api/v1/credits?pageSize=1"))).GetProperty("data");
+        var creditStats = credits.GetProperty("stats");
+        Assert.Equal(creditStats.GetProperty("unsettled").GetInt32(), unsettled);
+        Assert.Equal(creditStats.GetProperty("settled").GetInt32(), settled);
+        Assert.Equal(credits.GetProperty("total").GetInt32(), unsettled + settled);
     }
 
     // ================= 看板（与报表同源，一并守） =================

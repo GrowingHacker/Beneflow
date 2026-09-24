@@ -427,6 +427,21 @@ public class ReportServiceTests : TestBase
         Assert.Equal(350m, P<decimal>(r, "totalCredit"));
         Assert.Equal(240m, P<decimal>(r, "paidCredit"));
         Assert.Equal(110m, P<decimal>(r, "unpaidCredit"));
+        // 笔数按全量统计：wx_a 两笔未结清、wx_b 一笔已结清
+        Assert.Equal(2, P<int>(r, "unsettled"));
+        Assert.Equal(1, P<int>(r, "settled"));
+    }
+
+    [Fact]
+    public async Task CreditSummaryAsync_CountsFollowStatusNotPartialPayment()
+    {
+        SeedCredit("wx_a", 100m, 99m, Today);                  // 只差 1 元，仍未结清
+        SeedCredit("wx_b", 80m, 80m, Today, settled: true);    // 已结清
+
+        var r = await ReportSvc.CreditSummaryAsync(null, null);
+
+        Assert.Equal(1, P<int>(r, "unsettled"));
+        Assert.Equal(1, P<int>(r, "settled"));
     }
 
     [Fact]
@@ -447,6 +462,8 @@ public class ReportServiceTests : TestBase
         var r = await ReportSvc.CreditSummaryAsync(null, null);
 
         Assert.Equal(0m, P<decimal>(r, "totalCredit"));
+        Assert.Equal(0, P<int>(r, "unsettled"));
+        Assert.Equal(0, P<int>(r, "settled"));
         Assert.Empty(P<IEnumerable<object>>(r, "byWechat")!);
     }
 
