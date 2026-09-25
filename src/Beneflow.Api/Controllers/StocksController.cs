@@ -44,7 +44,7 @@ public class StocksController : BaseApiController
     public async Task<ApiResult<string>> MarkProcessed([FromBody] long[] ids) => await _svc.MarkProcessedAsync(ids);
 
     // ---------- 库存预警 ----------
-    /// <summary>低于安全库存的商品 + 建议补货数量</summary>
+    /// <summary>低于安全库存的商品 + 缺口（安全库存 − 当前库存）</summary>
     [HttpGet("warnings")]
     public async Task<ApiResult<List<object>>> Warnings() =>
         ApiResult<List<object>>.Ok(await _svc.WarningsAsync());

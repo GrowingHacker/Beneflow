@@ -6,7 +6,9 @@ namespace Beneflow.Api.Services;
 /// <summary>采购管理：进货单（移动加权平均成本）+ 采购退货</summary>
 public interface IPurchaseService
 {
-    Task<PagedResult<object>> ListAsync(string? keyword, string? dateFrom, string? dateTo, int page, int pageSize);
+    /// <summary>进货单列表；supplierId 为精确筛选（供应商列表的「进货记录」弹窗用），
+    /// 与 keyword 的模糊匹配互不替代 —— 按供应商名做 keyword 会串到名字含同一片段的别家单据。</summary>
+    Task<PagedResult<object>> ListAsync(string? keyword, string? dateFrom, string? dateTo, int page, int pageSize, int? supplierId = null);
     Task<ApiResult<object>> GetDetailAsync(int id);
     Task<ApiResult<object>> CreateAsync(CreatePurchaseDto dto);
     /// <summary>作废进货单：回退库存、删除批次、标记作废</summary>

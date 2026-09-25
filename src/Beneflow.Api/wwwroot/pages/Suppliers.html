@@ -61,12 +61,44 @@
       <el-button type="primary" @click="save">保存</el-button>
     </template>
   </el-dialog>
+
+  <!-- 某供应商的进货记录：按 supplierId 精确筛，不做名称模糊匹配（否则会串到名字含同一片段的别家单据） -->
+  <el-dialog v-model="purchaseDialog" :title="'「' + (purchaseSupplier.name || '') + '」的进货记录'" width="900px">
+    <div class="table-wrap">
+      <el-table :data="purchaseList" v-loading="purchaseLoading" border size="small" max-height="420"
+                empty-text="该供应商暂无进货记录">
+        <el-table-column label="单号" prop="orderNo" width="160" />
+        <el-table-column label="状态" width="90" align="center">
+          <template #default="{ row }">
+            <el-tag v-if="row.isVoided" type="info" size="small">已作废</el-tag>
+            <el-tag v-else type="success" size="small">正常</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="种类数" prop="itemCount" width="80" align="center" />
+        <el-table-column label="总数量" prop="totalQty" width="90" align="right" />
+        <el-table-column label="总金额" width="110" align="right">
+          <template #default="{ row }">{{ common.money(row.totalAmount) }}</template>
+        </el-table-column>
+        <el-table-column label="操作人" prop="createdByName" width="100" />
+        <el-table-column label="日期" prop="createdAt" width="150" />
+      </el-table>
+    </div>
+    <div class="pagination-wrap">
+      <el-pagination
+        v-model:current-page="purchasePage" v-model:page-size="purchasePageSize"
+        :total="purchaseTotal" :page-sizes="[10,20,50]" layout="total, sizes, prev, pager, next"
+        @size-change="loadPurchases" @current-change="loadPurchases" />
+    </div>
+    <template #footer>
+      <el-button @click="purchaseDialog=false">关闭</el-button>
+    </template>
+  </el-dialog>
 </div>
 
 <script page-setup>
 function pageSetup(deps) {
   const { ref, onMounted } = Vue;
-  const { api, common, toast, confirm, goPage } = deps;
+  const { api, common, toast, confirm } = deps;
 
   const list = ref([]);
   const loading = ref(false);
@@ -115,13 +147,40 @@ function pageSetup(deps) {
     try { await api.delete('/suppliers/' + row.id); toast('已删除', 'success'); load(); } catch (e) {}
   }
 
+  // ---- 进货记录弹窗 ----
+  const purchaseDialog = ref(false);
+  const purchaseSupplier = ref({});
+  const purchaseList = ref([]);
+  const purchaseLoading = ref(false);
+  const purchasePage = ref(1);
+  const purchasePageSize = ref(20);
+  const purchaseTotal = ref(0);
+
   function viewPurchases(row) {
-    toast('查看「' + row.name + '」进货记录，跳转进货单', 'info');
-    goPage(6);
+    purchaseSupplier.value = row;
+    purchasePage.value = 1;
+    purchasePageSize.value = 20;
+    purchaseList.value = [];
+    purchaseTotal.value = 0;
+    purchaseDialog.value = true;
+    loadPurchases();
+  }
+
+  async function loadPurchases() {
+    const supplierId = purchaseSupplier.value.id;
+    if (!supplierId) return;
+    purchaseLoading.value = true;
+    try {
+      const res = await api.get('/purchases', { params: { supplierId, page: purchasePage.value, pageSize: purchasePageSize.value } });
+      purchaseList.value = res.list || []; purchaseTotal.value = res.total || 0;
+    } catch (e) {}
+    finally { purchaseLoading.value = false; }
   }
 
   onMounted(load);
   return { list, loading, keyword, page, pageSize, total, dialog, form, common,
-    load, search, reset, openCreate, openEdit, save, toggleStatus, remove, viewPurchases };
+    load, search, reset, openCreate, openEdit, save, toggleStatus, remove, viewPurchases,
+    purchaseDialog, purchaseSupplier, purchaseList, purchaseLoading,
+    purchasePage, purchasePageSize, purchaseTotal, loadPurchases };
 }
 </script>

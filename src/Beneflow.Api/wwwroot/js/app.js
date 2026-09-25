@@ -10,7 +10,7 @@
  *   }
  *   </script>
  *
- * deps 包含：currentUser, api, common, goPage, toast, confirm
+ * deps 包含：currentUser, api, common, goPage, handoff, toast, confirm
  */
 async function loadPage(path) {
   const res = await fetch(path);
@@ -256,12 +256,22 @@ async function initApp() {
         finally { clearing.value = false; }
       }
 
+      // 页面间一次性传参：A 页写入、B 页取走（如库存预警「前往进货」把补货清单交给进货单页）
+      //
+      // 只放内存、不放 localStorage：取走即清，刷新或正常切页后自然失效。
+      // 存 localStorage 会留下「手动点进进货单、却弹出上次那份补货清单」的残留。
+      let handoffPayload = null;
+
       // 注入给各页面使用的公共依赖
       const deps = {
         currentUser: currentUser,
         api: window.api,
         common: window.common,
         goPage: goPage,
+        handoff: {
+          set: function (payload) { handoffPayload = payload; },
+          take: function () { const p = handoffPayload; handoffPayload = null; return p; },
+        },
         toast: function (msg, type) { ElementPlus.ElMessage({ message: msg, type: type || 'info' }); },
         confirm: function (msg) {
           return ElementPlus.ElMessageBox.confirm(msg, '提示', {

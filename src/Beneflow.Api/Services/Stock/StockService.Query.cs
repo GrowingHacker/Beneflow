@@ -26,8 +26,14 @@ public partial class StockService : IStockService
             id = r.p.Id, barcode = r.p.Barcode, name = r.p.Name,
             categoryName = r.CategoryName, unit = r.p.Unit,
             stockQuantity = r.p.StockQuantity, safetyStock = r.p.SafetyStock,
-            shortage = Math.Max(0, r.p.SafetyStock - r.p.StockQuantity),   // 建议补货数量
+            // 缺口 = 安全库存 − 当前库存，即「把库存推回触发线上还差多少」。
+            // 它不等于「建议补货」：建议补货要补到目标水位（2 × 安全库存）、比缺口更大，
+            // 由前端列与导出处各自按 max(安全库存×2 − 当前库存, 安全库存) 计算。
+            shortage = Math.Max(0, r.p.SafetyStock - r.p.StockQuantity),
             costPrice = r.p.CostPrice, salePrice = r.p.SalePrice,
+            // 称重标记要一路带到前端：库存预警「前往进货」靠它决定建单弹窗里数量能不能填小数
+            // （按整数件渲染的话，散装重量根本填不进去）。
+            isWeighted = r.p.IsWeighted,
             status = r.p.StockQuantity <= 0 ? "缺货" : "预警",
         }).ToList();
     }

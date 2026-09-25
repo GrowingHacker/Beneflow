@@ -7,7 +7,7 @@
     <div class="toolbar">
       <span style="font-weight:600;">库存预警清单</span>
       <div class="grow"></div>
-      <el-button type="primary" @click="goPage(6)">前往进货</el-button>
+      <el-button type="primary" @click="goPurchase">前往进货</el-button>
       <el-button @click="exportList">导出 CSV</el-button>
       <el-button type="success" @click="exportExcel">导出 Excel</el-button>
     </div>
@@ -17,8 +17,14 @@
         <el-table-column label="名称" prop="name" min-width="160" />
         <el-table-column label="当前库存" prop="stockQuantity" width="100" />
         <el-table-column label="安全库存" prop="safetyStock" width="100" />
-        <el-table-column label="缺口" width="90"><template #default="{ row }"><span class="danger-text">{{ row.safetyStock - row.stockQuantity }}</span></template></el-table-column>
-        <el-table-column label="建议补货" width="100"><template #default="{ row }">{{ Math.max(row.safetyStock * 2 - row.stockQuantity, row.safetyStock) }}</template></el-table-column>
+        <el-table-column label="缺口" width="90">
+          <template #header><span title="缺口 = 安全库存 − 当前库存，即把库存拉回触发线上还差多少">缺口</span></template>
+          <template #default="{ row }"><span class="danger-text">{{ row.safetyStock - row.stockQuantity }}</span></template>
+        </el-table-column>
+        <el-table-column label="建议补货" width="100">
+          <template #header><span title="建议补货 = 补到目标水位（2 × 安全库存）需要的数量，比缺口大；补完后可卖「安全库存」件才会再次进预警">建议补货</span></template>
+          <template #default="{ row }">{{ suggestQty(row) }}</template>
+        </el-table-column>
         <el-table-column label="状态" width="90"><template #default="{ row }"><el-tag :type="row.stockQuantity <= 0 ? 'danger' : 'warning'" size="small">{{ row.stockQuantity <= 0 ? '缺货' : '预警' }}</el-tag></template></el-table-column>
       </el-table>
     </div>
@@ -28,16 +34,57 @@
 <script page-setup>
 function pageSetup(deps) {
   const { ref, computed, onMounted } = Vue;
-  const { api, common, toast, goPage } = deps;
+  const { api, common, toast, goPage, handoff } = deps;
   const list = ref([]); const loading = ref(false);
 
+  // 后端 warnings 端点已按 stockQuantity <= safetyStock 筛过一遍，这里再筛一次是双保险：
+  // 清单判据只此一处口径，端点语义万一变了也不会把不该显示的行漏到页面上。
   const all = computed(() => list.value.filter(r => (r.stockQuantity||0) <= (r.safetyStock||0)));
   const shortageList = computed(() => all.value.filter(r => (r.stockQuantity||0) <= 0));
   const warningList = computed(() => all.value.filter(r => (r.stockQuantity||0) > 0));
 
+  // 建议补货 = 补到两倍安全库存（至少补到安全库存线）。
+  // 抽成函数是因为「表里这一列」与「带去进货单的数量」必须是同一个数 —— 写两份迟早会漂。
+  function suggestQty(row) {
+    const safety = Number(row.safetyStock) || 0;
+    const stock = Number(row.stockQuantity) || 0;
+    return Math.max(safety * 2 - stock, safety);
+  }
+
+  // 前往进货：不只是切页，而是把整份待补货清单交给进货单页，
+  // 由它直接打开「新增进货单」弹窗并预填商品与建议数量（供应商留给用户选）。
+  function goPurchase() {
+    const rows = all.value;
+    // 建议补货为 0 的行（缺货但没设安全库存）不能带过去：后端要求进货数量 > 0，
+    // 带过去就是一张注定提交失败的清单。表里仍照原样显示 0，不在这里改它的含义。
+    const plan = rows
+      .map(function (r) { return { row: r, qty: suggestQty(r) }; })
+      .filter(function (x) { return x.qty > 0; });
+    if (!plan.length) {
+      toast(rows.length ? '清单里商品的建议补货都是 0（未设安全库存），请先补全安全库存' : '当前没有需要补货的商品', 'warning');
+      return;
+    }
+    handoff.set({
+      source: '库存预警',
+      skipped: rows.length - plan.length,
+      items: plan.map(function (x) {
+        const r = x.row;
+        return {
+          id: r.id, barcode: r.barcode || '', name: r.name,
+          isWeighted: !!r.isWeighted, unit: r.unit || '',
+          qty: x.qty, costPrice: Number(r.costPrice) || 0,
+        };
+      }),
+    });
+    goPage(6);
+  }
+
+  // 取数走 /stocks/warnings 而不是 /stocks：预警清单要的是「全部低于安全库存的商品」，
+  // 而 /stocks 是分页接口、还会把 pageSize 夹到 200，商品数一多就会静默漏掉后半批 ——
+  // 它们既不显示在清单里，也不会被「前往进货」带走。warnings 端点不分页，语义正合适。
   async function load() {
     loading.value = true;
-    try { const res = await api.get('/stocks', { params: { pageSize: 500 } }); list.value = res.list||[]; } catch(e){}
+    try { const res = await api.get('/stocks/warnings'); list.value = res || []; } catch(e){}
     finally { loading.value = false; }
   }
   async function exportList() {
@@ -49,6 +96,7 @@ function pageSetup(deps) {
     if (ok) toast('已导出','success');
   }
   onMounted(load);
-  return { list, loading, all, shortageList, warningList, exportList, exportExcel, goPage, common, toast };
+  return { list, loading, all, shortageList, warningList, exportList, exportExcel,
+    goPurchase, suggestQty, goPage, common, toast };
 }
 </script>

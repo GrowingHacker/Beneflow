@@ -43,6 +43,23 @@ public class StockQueryIntegrationTests : IntegrationSeedBase
         Assert.Equal(5m, row.GetProperty("safetyStock").GetDecimal());
         Assert.Equal(240m, row.GetProperty("stockAmount").GetDecimal());   // 30 × 8
         Assert.Equal("正常", row.GetProperty("status").GetString());
+        Assert.False(row.GetProperty("isWeighted").GetBoolean());
+    }
+
+    [Fact]
+    public async Task 实时库存_称重商品带isWeighted标记()
+    {
+        // 库存预警「前往进货」把待补货商品带进建单弹窗时靠它：没有这个标记，
+        // 弹窗会按整数件渲染数量（最小 1、步进 1），散装重量填不进去。
+        await LoginAsAdminAsync();
+        var name = NewTag("ITSTKW");
+        await SeedProductAsync(name, salePrice: 8m, costPrice: 5m, stock: 1m, safetyStock: 9m, isWeighted: true);
+
+        var row = (await ReadBody(await Client.GetAsync($"/api/v1/stocks?keyword={Esc(name)}")))
+            .GetProperty("data").GetProperty("list").EnumerateArray().Single();
+
+        Assert.True(row.GetProperty("isWeighted").GetBoolean());
+        Assert.Equal("斤", row.GetProperty("unit").GetString());
     }
 
     [Fact]
@@ -127,7 +144,8 @@ public class StockQueryIntegrationTests : IntegrationSeedBase
     {
         await LoginAsAdminAsync();
         var name = NewTag("ITWARN");
-        await SeedProductAsync(name, salePrice: 5m, costPrice: 3m, stock: 2m, safetyStock: 10m);
+        await SeedProductAsync(name, salePrice: 5m, costPrice: 3m, stock: 2m, safetyStock: 10m,
+            isWeighted: true);
 
         var body = await ReadBody(await Client.GetAsync("/api/v1/stocks/warnings"));
         Assert.Equal(0, body.GetProperty("code").GetInt32());
@@ -138,6 +156,9 @@ public class StockQueryIntegrationTests : IntegrationSeedBase
         Assert.Equal(10m, mine.GetProperty("safetyStock").GetDecimal());
         Assert.Equal(8m, mine.GetProperty("shortage").GetDecimal());     // 10 − 2
         Assert.Equal("预警", mine.GetProperty("status").GetString());
+        // 键名与取值都要对：前端「前往进货」按 isWeighted 决定建单弹窗的数量能不能填小数，
+        // 键名写成 IsWeighted 或取值写死 false 都会让它按整数件渲染
+        Assert.True(mine.GetProperty("isWeighted").GetBoolean());
 
         // 预警表的判据是「库存 <= 安全库存」，逐行复核一遍
         Assert.All(rows, x => Assert.True(

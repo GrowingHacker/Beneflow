@@ -132,6 +132,34 @@ public class DocumentQueryIntegrationTests : IntegrationSeedBase
     }
 
     [Fact]
+    public async Task 进货单列表_可按供应商精确筛选()
+    {
+        await LoginAsAdminAsync();
+        var productId = await SeedProductAsync(NewTag("ITDPF"), salePrice: 9m, costPrice: 4m);
+
+        // 两家名字互为前缀的供应商：拿供应商名去撞 keyword 会把两家一起捞出来 ——
+        // 这正是供应商列表的「进货记录」弹窗必须按 supplierId 筛、而不是传名称的原因。
+        var mineName = NewTag("ITSUP");
+        var mineId = await SeedSupplierAsync(mineName);
+        var otherId = await SeedSupplierAsync(mineName[..^1]);
+
+        await SeedPurchaseAsync(mineId, (productId, 2m, 4m));
+        await SeedPurchaseAsync(otherId, (productId, 3m, 4m));
+
+        // 对照组：按名称模糊查确实串单（弹窗若照这么做，标题写着 A 家的名字、表里混着 B 家的单）
+        var byName = (await ReadBody(await Client.GetAsync($"/api/v1/purchases?keyword={mineName[..^1]}")))
+            .GetProperty("data");
+        Assert.Equal(2, byName.GetProperty("total").GetInt32());
+
+        var data = (await ReadBody(await Client.GetAsync($"/api/v1/purchases?supplierId={mineId}")))
+            .GetProperty("data");
+        Assert.Equal(1, data.GetProperty("total").GetInt32());
+        var row = data.GetProperty("list").EnumerateArray().Single();
+        Assert.Equal(mineId, row.GetProperty("supplierId").GetInt32());
+        Assert.Equal(2m, row.GetProperty("totalQty").GetDecimal());
+    }
+
+    [Fact]
     public async Task 进货单详情_带供应商与明细行()
     {
         await LoginAsAdminAsync();

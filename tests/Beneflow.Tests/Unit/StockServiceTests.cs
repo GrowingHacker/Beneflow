@@ -54,6 +54,21 @@ public class StockServiceTests : TestBase
     }
 
     [Fact]
+    public async Task InventoryListAsync_WeightedFlag_ComesFromProduct()
+    {
+        // 称重标记要一路带到前端：库存预警「前往进货」靠它决定建单弹窗里数量能不能填小数
+        // （按整数件渲染的话，散装重量根本填不进去）。这里同时钉住「不是写死的 false」。
+        Db.Products.First(x => x.Id == ProductAId).IsWeighted = true;
+        Db.SaveChanges();
+
+        var result = await StockSvc.InventoryListAsync(null, null, 1, 50);
+        var list = Prop<IEnumerable<object>>(result, "list")!.ToList();
+
+        Assert.True(Prop<bool>(list.First(x => Prop<int>(x, "id") == ProductAId), "isWeighted"));
+        Assert.False(Prop<bool>(list.First(x => Prop<int>(x, "id") == ProductBId), "isWeighted"));
+    }
+
+    [Fact]
     public async Task InventoryListAsync_OutOfStock_StatusIsShortage()
     {
         var result = await StockSvc.InventoryListAsync(null, null, 1, 50);
@@ -289,7 +304,7 @@ public class StockServiceTests : TestBase
         var a = list.FirstOrDefault(x => Prop<int>(x, "id") == ProductAId);
         Assert.NotNull(a);
         Assert.Equal("预警", Prop<string>(a, "status"));
-        Assert.Equal(8m, Prop<decimal>(a, "shortage"));   // 建议补货 = 安全库存 - 库存
+        Assert.Equal(8m, Prop<decimal>(a, "shortage"));   // 缺口 = 安全库存 − 库存
     }
 
     [Fact]
@@ -297,6 +312,19 @@ public class StockServiceTests : TestBase
     {
         var list = await StockSvc.WarningsAsync();
         Assert.Contains(list, x => Prop<string>(x, "status") == "缺货");
+    }
+
+    [Fact]
+    public async Task WarningsAsync_WeightedFlag_ComesFromProduct()
+    {
+        // 预警清单也要带称重标记：「前往进货」把它带进建单弹窗，决定数量能不能填小数。
+        // 同时钉住「不是写死的 true / false」—— A 为真、B 为假，写死任何一边都会红。
+        Db.Products.First(x => x.Id == ProductAId).IsWeighted = true;
+        await Db.SaveChangesAsync();
+
+        var list = await StockSvc.WarningsAsync();
+        Assert.True(Prop<bool>(list.First(x => Prop<int>(x, "id") == ProductAId), "isWeighted"));
+        Assert.False(Prop<bool>(list.First(x => Prop<int>(x, "id") == ProductBId), "isWeighted"));
     }
 
     // ================= 库存流水 =================

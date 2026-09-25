@@ -31,7 +31,8 @@ public abstract class IntegrationSeedBase : IntegrationTestBase
 
     /// <summary>建商品（库存为 0 时靠进货入库），返回商品 id</summary>
     protected async Task<int> SeedProductAsync(string name, decimal salePrice = 10m, decimal costPrice = 6m,
-        decimal stock = 0, decimal safetyStock = 0, bool hasExpiry = false, int shelfLifeDays = 0)
+        decimal stock = 0, decimal safetyStock = 0, bool hasExpiry = false, int shelfLifeDays = 0,
+        bool isWeighted = false)
     {
         var catId = await FirstCategoryIdAsync();
         var resp = await PostJsonAsync("/api/v1/products", new
@@ -39,14 +40,14 @@ public abstract class IntegrationSeedBase : IntegrationTestBase
             barcode = "",
             name,
             categoryId = catId,
-            unit = "瓶",
+            unit = isWeighted ? "斤" : "瓶",
             salePrice,
             costPrice,
             stockQuantity = stock,
             safetyStock,
             hasExpiry,
             shelfLifeDays,
-            isWeighted = false,
+            isWeighted,
             status = true,
         });
         return (await ExpectOk(resp)).GetProperty("id").GetInt32();

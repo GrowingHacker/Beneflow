@@ -521,6 +521,59 @@ public class PurchaseServiceTests : TestBase
         Assert.Contains("已作废", updateResult.Message);
     }
 
+    // ========== 列表按供应商筛选（供应商列表的「进货记录」弹窗） ==========
+
+    [Fact]
+    public async Task ListAsync_FilterBySupplierId_OnlyThatSupplier()
+    {
+        var otherId = await NewSupplierAsync("另一家供应商");
+        await OneOrderAsync(SupplierId);
+        await OneOrderAsync(otherId);
+
+        var page = await PurchaseSvc.ListAsync(null, null, null, 1, 20, SupplierId);
+
+        Assert.Equal(1, page.Total);
+        Assert.Single(page.List);
+        Assert.Equal(SupplierId, Prop<int>(page.List[0], "supplierId"));
+    }
+
+    [Fact]
+    public async Task ListAsync_FilterBySupplierId_TotalCountsOnlyFilteredRows()
+    {
+        // 3 张本家 + 1 张别家，一页只放 2 条。
+        // 这里守的是「个数统计也带了筛选条件」：只给列表加 where、忘了给 CountAsync 加时，
+        // 当前页看着完全正常，只有 total 会变成 4（弹窗底部的「共 N 条」随之虚高）。
+        for (var i = 0; i < 3; i++) await OneOrderAsync(SupplierId);
+        await OneOrderAsync(await NewSupplierAsync("另一家供应商"));
+
+        var page = await PurchaseSvc.ListAsync(null, null, null, 1, 2, SupplierId);
+
+        Assert.Equal(3, page.Total);
+        Assert.Equal(2, page.List.Count);
+    }
+
+    [Fact]
+    public async Task ListAsync_WithoutSupplierId_ReturnsAllSuppliers()
+    {
+        // 不传 supplierId 时行为不变（进货单列表页走的仍是这条路，不能被新筛选条件收窄）
+        await OneOrderAsync(SupplierId);
+        await OneOrderAsync(await NewSupplierAsync("另一家供应商"));
+
+        var page = await PurchaseSvc.ListAsync(null, null, null, 1, 20);
+
+        Assert.Equal(2, page.Total);
+    }
+
+    private async Task<int> NewSupplierAsync(string name) =>
+        GetResultDataProp<int>((await SupplierSvc.CreateAsync(new SupplierUpsertDto { Name = name })).Data!, "id");
+
+    private Task<ApiResult<object>> OneOrderAsync(int supplierId) =>
+        PurchaseSvc.CreateAsync(new CreatePurchaseDto
+        {
+            SupplierId = supplierId,
+            Details = new List<PurchaseDetailDto> { new() { ProductId = ProductAId, Qty = 1, CostPrice = 3.00m } },
+        });
+
     // ========== 边界场景 ==========
 
     [Fact]

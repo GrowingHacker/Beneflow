@@ -20,7 +20,7 @@ public partial class PurchaseService : IPurchaseService
 
     // ================= 进货单 =================
 
-    public async Task<PagedResult<object>> ListAsync(string? keyword, string? dateFrom, string? dateTo, int page, int pageSize)
+    public async Task<PagedResult<object>> ListAsync(string? keyword, string? dateFrom, string? dateTo, int page, int pageSize, int? supplierId = null)
     {
         var q =
             from o in _db.PurchaseOrders.AsNoTracking()
@@ -29,6 +29,10 @@ public partial class PurchaseService : IPurchaseService
             where string.IsNullOrEmpty(keyword)
                   || o.OrderNo.Contains(keyword) || s.Name.Contains(keyword) || u.Name.Contains(keyword)
             select new { o, s.Name, UserName = u.Name };
+
+        // 供应商精确筛选（供应商列表的「进货记录」弹窗）：与 keyword 是「与」的关系
+        if (supplierId.HasValue)
+            q = q.Where(x => x.o.SupplierId == supplierId.Value);
 
         if (!string.IsNullOrEmpty(dateFrom) && DateTime.TryParse(dateFrom, out var df))
             q = q.Where(x => x.o.CreatedAt >= df);

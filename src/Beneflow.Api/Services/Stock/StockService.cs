@@ -49,6 +49,7 @@ public partial class StockService : IStockService
                 p.Id, p.Barcode, p.Name, CategoryName = c.Name,
                 p.Unit, p.SalePrice, p.CostPrice,
                 p.StockQuantity, p.SafetyStock, p.HasExpiry, p.ShelfLifeDays,
+                p.IsWeighted,
             };
 
         var all = await q.ToListAsync();
@@ -83,6 +84,9 @@ public partial class StockService : IStockService
                 stockQuantity = p.StockQuantity, safetyStock = p.SafetyStock,
                 stockAmount = Math.Round(p.StockQuantity * p.CostPrice, 2),
                 hasExpiry = p.HasExpiry,
+                // 称重商品：库存预警「前往进货」把待补货商品带进建单弹窗时要靠它，
+                // 否则弹窗按「整数件」渲染数量（最小 1、步进 1），散装重量填不进去
+                isWeighted = p.IsWeighted,
                 expireDate = expire?.ToString("yyyy-MM-dd"),
                 daysLeft = left,
                 status = st,
